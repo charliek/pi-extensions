@@ -94,7 +94,7 @@ Focus: <focus text or none>
 Instructions: Report only. Do not edit. Return structured findings per your agent charter.
 ```
 
-Set `run_in_background: true` on all four calls and emit all four `Agent` calls in one tool message so they actually run concurrently. Then collect each result with `get_subagent_result`; do not poll repeatedly.
+Set `run_in_background: true` on all four calls and emit all four `Agent` calls in one tool message so they actually run concurrently. Collect results in **one parallel batch** of `get_subagent_result` calls with `wait: true` for each returned subagent id — do not poll repeatedly or collect sequentially.
 
 ## Partial failures
 

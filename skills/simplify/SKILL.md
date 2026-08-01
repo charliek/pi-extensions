@@ -30,7 +30,7 @@ Per lens, first match wins: `--model` / `--thinking` flags → composed-workflow
 
 1. Capture scope + bundle once.
 2. Launch **four concurrent** read-only subagents (`run_in_background: true`, one tool message): `px-simplify-reuse`, `px-simplify-structure`, `px-simplify-efficiency`, `px-simplify-altitude`.
-3. Collect with `get_subagent_result`; continue on partial failures; do not apply findings from failed lenses.
+3. Collect in one parallel batch of `get_subagent_result` with `wait: true`; continue on partial failures; do not apply findings from failed lenses.
 4. Deduplicate findings; present disposition table (apply | skip | needs-user).
 5. **Before any edit:** re-run capture-scope; if fingerprint ≠ pre-review fingerprint, stop and report drift (before/after).
 6. **After edits:** re-run capture-scope; report fingerprint before/after.

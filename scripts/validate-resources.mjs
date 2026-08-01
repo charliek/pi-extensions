@@ -5,7 +5,7 @@ import { parse as parseYaml } from "yaml";
 
 const REQUIRED_DIRECTORIES = ["agents", "extensions", "prompts", "skills"];
 
-/** C2 simplify and review primitives; C3 adds planning resources. */
+/** C2 simplify/review primitives; C3 planning primitive and panel review. */
 export const EXPECTED_RESOURCES = {
   agents: [
     "px-simplify-reuse.md",
@@ -14,9 +14,21 @@ export const EXPECTED_RESOURCES = {
     "px-simplify-altitude.md",
     "px-code-reviewer.md",
     "px-adversarial-reviewer.md",
+    "px-plan-feasibility-reviewer.md",
+    "px-plan-risk-reviewer.md",
+    "px-plan-alternatives-reviewer.md",
   ],
-  prompts: ["simplify.md", "code-review.md", "adversarial-review.md"],
-  skills: ["simplify", "code-review", "adversarial-review"],
+  prompts: [
+    "simplify.md",
+    "code-review.md",
+    "adversarial-review.md",
+    "plan.md",
+    "review-plan.md",
+    "plan-w-panel.md",
+    "plan-w-grok.md",
+    "plan-w-codex.md",
+  ],
+  skills: ["simplify", "code-review", "adversarial-review", "planning"],
 };
 
 const REVIEWER_TOOL_ALLOWLIST = new Set(["read", "grep", "find", "ls"]);

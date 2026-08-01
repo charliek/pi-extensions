@@ -87,6 +87,7 @@ test("C2 simplify prompt requires four concurrent Grok lenses and parent-only ed
   assert.match(body, /four concurrent/i);
   assert.match(body, /run_in_background: true/);
   assert.match(body, /get_subagent_result/);
+  assert.match(body, /wait:\s*true|wait: true/);
   assert.match(body, /unified diff\/scope bundle/i);
   assert.match(body, /px-simplify-reuse/);
   assert.match(body, /px-simplify-structure/);
@@ -146,7 +147,7 @@ test("C2 distinguishes Pi tool restriction from Cursor prompt enforcement for Gr
   assert.match(simplifyPrompt, /Reviewers must not edit, write, bash/);
 });
 
-test("C2 sync-agents installs six managed agents and passes --check", () => {
+test("C2 sync-agents installs managed agents and passes --check", () => {
   const agentHome = mkdtempSync(join(tmpdir(), "px-c2-sync-"));
   const result = syncAgents({
     packageRoot: repositoryRoot,
@@ -166,8 +167,177 @@ test("C2 sync-agents installs six managed agents and passes --check", () => {
   assert.equal(result.manifest.packageRoot, repositoryRoot);
 });
 
-test("C2 prompt set excludes planning aliases (C3 scope)", () => {
-  const prompts = allPromptBodies();
-  assert.doesNotMatch(prompts, /\/plan-w-glm/);
-  assert.doesNotMatch(prompts, /\/plan\b/);
+test("C3 expected resources exist and validate", () => {
+  assert.equal(validateRepository(repositoryRoot), true);
+  assert.equal(EXPECTED_RESOURCES.agents.length, 9);
+  assert.equal(EXPECTED_RESOURCES.prompts.length, 8);
+  assert.equal(EXPECTED_RESOURCES.skills.length, 4);
+});
+
+test("C3 plan reviewer agents match read-only charter and omit model pins", () => {
+  const planAgents = [
+    "px-plan-feasibility-reviewer.md",
+    "px-plan-risk-reviewer.md",
+    "px-plan-alternatives-reviewer.md",
+  ];
+  for (const name of planAgents) {
+    const content = readResource("agents", name);
+    const values = validateAgentDocument(join("agents", name), content);
+    assert.ok(!Object.hasOwn(values, "model"), `${name} must omit model`);
+    assert.ok(!Object.hasOwn(values, "thinking"), `${name} must omit thinking`);
+    assert.equal(values.prompt_mode, "append", `${name} must use prompt_mode append`);
+    assert.equal(values.skills, false, `${name} must set skills false`);
+    assert.match(String(values.extensions), /pi-cursor-sdk/, `${name} must load pi-cursor-sdk`);
+    assert.match(String(values.disallowed_tools), /\bbash\b/, `${name} must disallow bash`);
+    assert.match(String(values.disallowed_tools), /\bedit\b/, `${name} must disallow edit`);
+    assert.match(String(values.disallowed_tools), /\bwrite\b/, `${name} must disallow write`);
+    assert.match(content, /non-overridable/i, `${name} charter`);
+    assert.match(content, /Do not edit, write, create, or delete files/, `${name} mutation ban`);
+  }
+});
+
+test("C3 planning prompts declare canonical commands, schema, and review modes", () => {
+  const plan = readResource("prompts", "plan.md");
+  const reviewPlan = readResource("prompts", "review-plan.md");
+
+  assert.match(plan, /\/plan — gauntlet plan generation/);
+  assert.match(plan, /--review panel\|grok\|codex\|glm/);
+  assert.match(plan, /allocate-plan\.mjs/);
+  assert.match(plan, /~\/\.claude\/plans\/<primary-repo>\/NNN-<slug>\.md/);
+  assert.match(plan, /Verified current state.*file:line/s);
+  assert.match(plan, /Pinned design decisions/);
+  assert.match(plan, /Acceptance criteria/);
+  assert.match(plan, /Verification plan/);
+  assert.match(plan, /px-plan-feasibility-reviewer/);
+  assert.match(plan, /px-plan-risk-reviewer/);
+  assert.match(plan, /px-plan-alternatives-reviewer/);
+  assert.match(plan, /openai-codex\/gpt-5\.6-sol/);
+  assert.match(plan, /cursor\/grok-4\.5/);
+  assert.match(plan, /zai-coding-cn\/glm-5\.2/);
+  assert.match(plan, /--model PROVIDER\/MODEL/);
+  assert.match(plan, /Explicit flags on this command/);
+  assert.match(plan, /PI_EXTENSIONS_ROOT|PI_CODING_AGENT_DIR|PI_EXT_ROOT/);
+  assert.match(plan, /fingerprint/);
+  assert.match(plan, /Disposition every finding/);
+  assert.match(plan, /partial/i);
+  assert.match(plan, /first-discovered wins/i);
+  assert.match(plan, /disable or reorder the competing prompt resource/i);
+  assert.match(plan, /Do not rely on numeric suffixes/i);
+  assert.doesNotMatch(plan, /use `\/reload`|\/reload after syncing/i);
+  assert.match(plan, /before an optional `--` delimiter|--` delimiter/i);
+  assert.match(plan, /explicit plan location override/i);
+  assert.match(plan, /never forward.*allocate-plan|Pass \*\*only\*\*.*allocate-plan/is);
+  assert.match(plan, /wait:\s*true|wait: true/);
+  assert.match(plan, /do not embed a self-referential hash/i);
+
+  assert.match(reviewPlan, /\/review-plan/);
+  assert.match(reviewPlan, /active plan named in conversation/);
+  assert.match(reviewPlan, /Do \*\*not\*\* guess from unrelated recent files/);
+  assert.match(reviewPlan, /panel.*grok.*codex.*glm/s);
+  assert.match(reviewPlan, /self-contained/i);
+  assert.doesNotMatch(reviewPlan, /See `\/plan`/);
+  assert.match(reviewPlan, /wait:\s*true|wait: true/);
+  assert.match(reviewPlan, /px-plan-feasibility-reviewer/);
+  assert.match(reviewPlan, /openai-codex\/gpt-5\.6-sol/);
+  assert.match(reviewPlan, /cursor\/grok-4\.5/);
+  assert.match(reviewPlan, /zai-coding-cn\/glm-5\.2/);
+  assert.match(reviewPlan, /Disposition every finding/);
+  assert.match(reviewPlan, /partial/i);
+  assert.match(reviewPlan, /capture-scope\.mjs/);
+});
+
+test("C3 panel review requires three concurrent subagents in one message", () => {
+  const plan = readResource("prompts", "plan.md");
+  const panel = readResource("prompts", "plan-w-panel.md");
+
+  for (const body of [plan, panel]) {
+    assert.match(body, /three (?:concurrent )?(?:reviewers|agents)|three concurrent/i);
+    assert.match(body, /run_in_background: true/);
+    assert.match(body, /one tool message/i);
+    assert.match(body, /get_subagent_result/);
+    assert.match(body, /wait:\s*true|wait: true/);
+    assert.match(body, /px-plan-feasibility-reviewer/);
+    assert.match(body, /openai-codex\/gpt-5\.6-sol/);
+    assert.match(body, /px-plan-risk-reviewer/);
+    assert.match(body, /cursor\/grok-4\.5/);
+    assert.match(body, /px-plan-alternatives-reviewer/);
+    assert.match(body, /zai-coding-cn\/glm-5\.2/);
+  }
+});
+
+test("C3 aliases compose canonical /plan behavior and exclude plan-w-glm", () => {
+  const aliasNames = ["plan-w-panel.md", "plan-w-grok.md", "plan-w-codex.md"];
+  const allPrompts = allPromptBodies();
+
+  assert.doesNotMatch(allPrompts, /\/plan-w-glm/);
+  assert.doesNotMatch(allPrompts, /plan-w-glm/);
+  assert.doesNotMatch(allPrompts, /--feasibility-model|--risk-model|--alternatives-model/);
+
+  for (const name of aliasNames) {
+    const body = readResource("prompts", name);
+    assert.match(body, /\/plan --review/, `${name} must identify canonical behavior`);
+    assert.match(body, /self-contained/i, `${name} must execute without nested template expansion`);
+    assert.match(body, /allocate-plan\.mjs/, `${name} must allocate the canonical plan location`);
+    assert.match(body, /verified.*file:line/is, `${name} must require evidence-backed plan schema`);
+    assert.match(body, /before parent edits/i, `${name} must detect reviewer drift before applying findings`);
+    assert.match(body, /explicit plan location override/i, `${name} must honor project plan override`);
+    assert.match(body, /Disposition every finding|disposition every finding/i, `${name} must disposition findings`);
+    assert.match(body, /partial/i, `${name} must handle partial failures`);
+    assert.match(body, /cost|Cost disclosure/i, `${name} must disclose review cost`);
+    assert.match(body, /--model PROVIDER\/MODEL|--model.*--thinking/, `${name} must document generic model flags`);
+    assert.doesNotMatch(body, /See `\/plan`/, `${name} must not defer to /plan template`);
+  }
+
+  assert.match(readResource("prompts", "plan-w-panel.md"), /--review panel/);
+  assert.match(readResource("prompts", "plan-w-grok.md"), /--review grok/);
+  assert.match(readResource("prompts", "plan-w-codex.md"), /--review codex/);
+  assert.match(readResource("prompts", "plan-w-panel.md"), /wait:\s*true|wait: true/);
+});
+
+test("C3 planning skill is self-contained with allocation, panel, and drift rules", () => {
+  const content = readResource("skills", "planning");
+  assert.match(content, /allocate-plan\.mjs/);
+  assert.match(content, /PI_EXTENSIONS_ROOT|PI_CODING_AGENT_DIR/);
+  assert.match(content, /px-plan-feasibility-reviewer/);
+  assert.match(content, /px-plan-risk-reviewer/);
+  assert.match(content, /px-plan-alternatives-reviewer/);
+  assert.match(content, /three concurrent/i);
+  assert.match(content, /no.*\/plan-w-glm/i);
+  assert.match(content, /fingerprint|drift/i);
+  assert.match(content, /partial/i);
+  assert.match(content, /wait:\s*true|wait: true/);
+  assert.match(content, /Explicit.*Active.*Ask|explicit.*active.*ask/is);
+  assert.match(content, /explicit plan location override/i);
+  assert.match(content, /natural language|write a plan for/i);
+  assert.match(content, /review only|review this plan/i);
+  assert.match(content, /Argument parsing|-- delimiter/i);
+});
+
+test("C3 distinguishes Pi tool restriction from Cursor prompt enforcement for Grok risk reviewer", () => {
+  const risk = readResource("agents", "px-plan-risk-reviewer.md");
+  assert.match(risk, /Use only read, grep, find, and ls Pi tools/);
+  assert.match(risk, /If Cursor SDK or other native tools are available/);
+  assert.match(risk, /never for mutation/);
+});
+
+test("C3 sync-agents installs nine managed agents including plan reviewers", () => {
+  const agentHome = mkdtempSync(join(tmpdir(), "px-c3-sync-"));
+  const result = syncAgents({
+    packageRoot: repositoryRoot,
+    agentHome,
+    check: false,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.managedCount, 9);
+
+  for (const name of [
+    "px-plan-feasibility-reviewer.md",
+    "px-plan-risk-reviewer.md",
+    "px-plan-alternatives-reviewer.md",
+  ]) {
+    assert.ok(
+      Object.hasOwn(result.manifest.files, name),
+      `manifest must track ${name}`,
+    );
+  }
 });
