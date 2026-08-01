@@ -2,8 +2,6 @@
 
 Portable, version-controlled extensions and workflow primitives for the [Pi coding agent](https://pi.dev).
 
-> The repository name uses the standard spelling **extensions**.
-
 ## Goals
 
 This project will provide standalone, composable primitives for:
