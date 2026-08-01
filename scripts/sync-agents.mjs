@@ -14,21 +14,20 @@ import {
   withExclusiveLock,
   writeJsonAtomic,
 } from "./lib/fs-safety.mjs";
+import {
+  defaultAgentHome,
+  managedManifestPath,
+} from "./lib/package-root.mjs";
 
-const MANIFEST_BASENAME = "pi-extensions-managed-agents.json";
 const MANIFEST_SCHEMA_VERSION = 1;
 const MANAGED_FILENAME = /^px-[a-z0-9][a-z0-9-]*\.md$/;
 const SHA256_HEX = /^[a-f0-9]{64}$/;
 const SYNC_LOCK_BASENAME = ".pi-extensions-sync.lock";
 
-export function defaultAgentHome() {
-  const override = process.env.PI_CODING_AGENT_DIR;
-  if (override) return resolve(expandHome(override));
-  return resolve(expandHome("~/.pi/agent"));
-}
+export { defaultAgentHome } from "./lib/package-root.mjs";
 
 export function manifestPathFor(agentHome) {
-  return join(resolve(agentHome), MANIFEST_BASENAME);
+  return managedManifestPath(agentHome);
 }
 
 export function agentsDirFor(agentHome) {

@@ -1,4 +1,4 @@
-import { assertSafeGitRevision } from "../capture-scope.mjs";
+import { assertSafeGitRevision } from "./git.mjs";
 
 /**
  * Parse scope CLI flags. Paths and focus require explicit --path / --focus;

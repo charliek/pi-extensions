@@ -60,7 +60,7 @@ export function reportScriptResult(ctx, result, label) {
   }
 }
 
-function notify(ctx, message, level) {
+export function notify(ctx, message, level) {
   if (ctx.hasUI) {
     ctx.ui.notify(message, level);
   } else {

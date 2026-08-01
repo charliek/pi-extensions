@@ -39,23 +39,15 @@ export const DOCTOR_COMMAND = "pi-extensions-doctor";
 export const SYNC_ALLOWED_FLAGS = ["--check", "--force", "--remove"];
 export const DOCTOR_ALLOWED_FLAGS = ["--skip-models"];
 
-const SYNC_ALLOWED = new Set(SYNC_ALLOWED_FLAGS);
-const DOCTOR_ALLOWED = new Set(DOCTOR_ALLOWED_FLAGS);
-
-export function tokenizeArgs(argsString) {
-  const trimmed = String(argsString ?? "").trim();
-  return trimmed ? trimmed.split(/\s+/).filter(Boolean) : [];
-}
-
-export function parseSyncArgs(argsString) {
-  const tokens = tokenizeArgs(argsString);
+function parseAllowlistedFlags(tokens, allowedFlags) {
+  const allowed = new Set(allowedFlags);
   const flags = [];
 
   for (const token of tokens) {
-    if (!SYNC_ALLOWED.has(token)) {
+    if (!allowed.has(token)) {
       return {
         ok: false,
-        error: `Unknown flag: ${token}. Allowed: ${SYNC_ALLOWED_FLAGS.join(", ")}`,
+        error: `Unknown flag: ${token}. Allowed: ${allowedFlags.join(", ")}`,
       };
     }
     if (flags.includes(token)) {
@@ -64,6 +56,20 @@ export function parseSyncArgs(argsString) {
     flags.push(token);
   }
 
+  return { ok: true, flags };
+}
+
+export function tokenizeArgs(argsString) {
+  const trimmed = String(argsString ?? "").trim();
+  return trimmed ? trimmed.split(/\s+/).filter(Boolean) : [];
+}
+
+export function parseSyncArgs(argsString) {
+  const tokens = tokenizeArgs(argsString);
+  const parsed = parseAllowlistedFlags(tokens, SYNC_ALLOWED_FLAGS);
+  if (!parsed.ok) return parsed;
+
+  const { flags } = parsed;
   if (flags.includes("--check") && flags.includes("--remove")) {
     return { ok: false, error: "--check and --remove are mutually exclusive" };
   }
@@ -79,21 +85,10 @@ export function parseSyncArgs(argsString) {
 
 export function parseDoctorArgs(argsString) {
   const tokens = tokenizeArgs(argsString);
-  const flags = [];
+  const parsed = parseAllowlistedFlags(tokens, DOCTOR_ALLOWED_FLAGS);
+  if (!parsed.ok) return parsed;
 
-  for (const token of tokens) {
-    if (!DOCTOR_ALLOWED.has(token)) {
-      return {
-        ok: false,
-        error: `Unknown flag: ${token}. Allowed: ${DOCTOR_ALLOWED_FLAGS.join(", ")}`,
-      };
-    }
-    if (flags.includes(token)) {
-      return { ok: false, error: `Duplicate flag: ${token}` };
-    }
-    flags.push(token);
-  }
-
+  const { flags } = parsed;
   return {
     ok: true,
     skipModels: flags.includes("--skip-models"),

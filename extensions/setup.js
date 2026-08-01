@@ -6,7 +6,7 @@ import {
   parseDoctorArgs,
   parseSyncArgs,
 } from "./lib/setup-contract.mjs";
-import { reportScriptResult, runPackageScript } from "./lib/script-executor.mjs";
+import { notify, reportScriptResult, runPackageScript } from "./lib/script-executor.mjs";
 
 /**
  * Pi setup extension: explicit /pi-extensions-sync and /pi-extensions-doctor commands.
@@ -76,13 +76,4 @@ export function createPiExtensionsSetup({ exec, discoverRoot = discoverPackageRo
       },
     });
   };
-}
-
-function notify(ctx, message, level) {
-  if (ctx.hasUI) {
-    ctx.ui.notify(message, level);
-  } else {
-    const stream = level === "error" ? process.stderr : process.stdout;
-    stream.write(`${message}\n`);
-  }
 }

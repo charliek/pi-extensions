@@ -3,13 +3,13 @@ import { spawnSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
-  defaultAgentHome,
   inspectSyncAgents,
   listManagedSourceAgents,
   manifestPathFor,
   packageInfo,
 } from "./sync-agents.mjs";
 import { expandHome, readJsonIfExists } from "./lib/fs-safety.mjs";
+import { defaultAgentHome } from "./lib/package-root.mjs";
 
 export const REQUIRED_PI_PACKAGES = ["@tintinweb/pi-subagents", "pi-cursor-sdk"];
 

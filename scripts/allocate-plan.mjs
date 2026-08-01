@@ -1,5 +1,4 @@
 import { existsSync, readdirSync } from "node:fs";
-import { spawnSync } from "node:child_process";
 import { basename, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
@@ -8,6 +7,7 @@ import {
   expandHome,
   withExclusiveLock,
 } from "./lib/fs-safety.mjs";
+import { detectGitRoot } from "./lib/git.mjs";
 
 const PLAN_NAME = /^(\d{3})-(.+)\.md$/;
 const WINDOWS_RESERVED = new Set([
@@ -77,14 +77,7 @@ export function sanitizeRepositoryName(input) {
   return name;
 }
 
-export function detectGitRoot(cwd = process.cwd()) {
-  const result = spawnSync("git", ["rev-parse", "--show-toplevel"], {
-    cwd,
-    encoding: "utf8",
-  });
-  if (result.status !== 0) return null;
-  return result.stdout.trim();
-}
+export { detectGitRoot } from "./lib/git.mjs";
 
 export function detectRepositoryName(cwd = process.cwd(), explicitName) {
   if (explicitName) return sanitizeRepositoryName(explicitName);

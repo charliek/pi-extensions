@@ -1,35 +1,14 @@
 import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { captureScope, detectGitRoot, refDiffSpec } from "./capture-scope.mjs";
+import { captureScope } from "./capture-scope.mjs";
+import { detectGitRoot, git, refDiffSpec } from "./lib/git.mjs";
 import { sha256Text } from "./lib/fs-safety.mjs";
 import { parseScopeArgs } from "./lib/scope-args.mjs";
 
 export const DEFAULT_MAX_FILE_BYTES = 256 * 1024;
 export const DEFAULT_MAX_TOTAL_BYTES = 2 * 1024 * 1024;
-const GIT_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
-
-function git(cwd, args) {
-  const result = spawnSync("git", args, {
-    cwd,
-    encoding: "utf8",
-    maxBuffer: GIT_MAX_BUFFER_BYTES,
-  });
-  if (result.error?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") {
-    const error = new Error("git output exceeded buffer limit");
-    error.code = "GIT_MAXBUFFER";
-    throw error;
-  }
-  if (result.status !== 0) {
-    const message = (result.stderr || result.stdout || "git command failed").trim();
-    const error = new Error(message);
-    error.code = "GIT_ERROR";
-    throw error;
-  }
-  return result.stdout;
-}
 
 function pathFilterArgs(paths) {
   if (paths.length === 0) return [];
