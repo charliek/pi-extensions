@@ -20,8 +20,15 @@
   },
   "scripts": {
     "validate": "node scripts/validate-resources.mjs",
+    "sync-agents": "node scripts/sync-agents.mjs",
+    "doctor": "node scripts/doctor.mjs",
+    "allocate-plan": "node scripts/allocate-plan.mjs",
+    "capture-scope": "node scripts/capture-scope.mjs",
     "test": "node --test",
     "check": "npm run validate && npm test"
+  },
+  "dependencies": {
+    "yaml": "^2.8.0"
   },
   "pi": {
     "extensions": [
