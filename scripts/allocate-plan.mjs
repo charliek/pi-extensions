@@ -1,10 +1,13 @@
 import { existsSync, readdirSync } from "node:fs";
-import { basename, join, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
+  assertSafeCreateDestination,
   atomicCreateFile,
+  canonicalPath,
   ensureDir,
   expandHome,
+  isPathInside,
   withExclusiveLock,
 } from "./lib/fs-safety.mjs";
 import { detectGitRoot } from "./lib/git.mjs";
@@ -111,6 +114,110 @@ export function formatPlanNumber(n) {
   return String(n).padStart(3, "0");
 }
 
+/**
+ * Classify a plan-location override from target instructions.
+ * Auto-allowed only when contained in the target repo or configured PI_PLANS_DIR.
+ * Any other destination requires explicit user confirmation (`confirmed: true`).
+ */
+export function classifyPlanLocationOverride({
+  overridePath,
+  cwd = process.cwd(),
+  plansDir = defaultPlansDir(),
+  confirmed = false,
+} = {}) {
+  if (typeof overridePath !== "string" || !overridePath.trim()) {
+    throw new Error("plan location override path is required");
+  }
+  const resolved = canonicalPath(expandHome(overridePath.trim()));
+  const repoRoot = detectGitRoot(cwd);
+  const rootPlansDir = canonicalPath(expandHome(plansDir));
+  const allowedRoots = [rootPlansDir];
+  if (repoRoot) allowedRoots.push(canonicalPath(repoRoot));
+
+  const autoAllowed = allowedRoots.some((root) => isPathInside(root, resolved));
+  if (!autoAllowed && !confirmed) {
+    const error = new Error(
+      `plan location override requires explicit user confirmation (outside target repo and PI_PLANS_DIR): ${resolved}`,
+    );
+    error.code = "PLAN_LOCATION_CONFIRM_REQUIRED";
+    error.resolvedPath = resolved;
+    error.allowedRoots = allowedRoots;
+    throw error;
+  }
+
+  const safetyRoot = autoAllowed
+    ? allowedRoots.find((root) => isPathInside(root, resolved))
+    : null;
+  assertSafeCreateDestination(resolved, {
+    root: safetyRoot,
+    label: "plan location override",
+  });
+
+  return {
+    planPath: resolved,
+    artifactsDir: join(dirname(resolved), basename(resolved, ".md")),
+    autoAllowed,
+    confirmed: Boolean(confirmed),
+    plansDir: rootPlansDir,
+    repoRoot,
+  };
+}
+
+/**
+ * Create a plan file at an explicit override path (no-clobber, symlink-safe parent).
+ */
+export function allocatePlanAtOverride({
+  overridePath,
+  cwd = process.cwd(),
+  plansDir = defaultPlansDir(),
+  confirmed = false,
+  slug,
+  brief,
+  body,
+} = {}) {
+  const classified = classifyPlanLocationOverride({
+    overridePath,
+    cwd,
+    plansDir,
+    confirmed,
+  });
+  const planSlug = sanitizeSlug(slug ?? brief ?? basename(classified.planPath, ".md"));
+  const lockTarget = join(dirname(classified.planPath), ".allocate-override.lock");
+
+  return withExclusiveLock(lockTarget, () => {
+    // Re-validate under the lock so a concurrent creator cannot be clobbered.
+    assertSafeCreateDestination(classified.planPath, {
+      label: "plan location override",
+    });
+    if (existsSync(classified.artifactsDir)) {
+      throw new Error(`plan artifacts path already exists: ${classified.artifactsDir}`);
+    }
+
+    const contents =
+      body ??
+      `# ${basename(classified.planPath, ".md")}
+
+## Status
+
+Draft — allocated by allocate-plan override.
+
+## Motivation
+
+${brief ? String(brief).trim() : "(fill in)"}
+`;
+    const normalized = contents.endsWith("\n") ? contents : `${contents}\n`;
+    atomicCreateFile(classified.planPath, normalized);
+    ensureDir(classified.artifactsDir);
+
+    return {
+      ...classified,
+      slug: planSlug,
+      id: basename(classified.planPath, ".md"),
+      overridden: true,
+    };
+  });
+}
+
 export function allocatePlan({
   cwd = process.cwd(),
   slug,
@@ -162,6 +269,7 @@ ${brief ? String(brief).trim() : "(fill in)"}
       artifactsDir,
       plansDir: rootPlansDir,
       repoDir,
+      overridden: false,
     };
   });
 }
@@ -173,6 +281,8 @@ function parseArgs(argv) {
     slug: null,
     brief: null,
     repository: null,
+    overridePath: null,
+    confirmed: false,
   };
   const positionals = [];
   for (let i = 0; i < argv.length; i += 1) {
@@ -181,6 +291,8 @@ function parseArgs(argv) {
     else if (arg === "--repository") options.repository = argv[++i];
     else if (arg === "--plans-dir") options.plansDir = argv[++i];
     else if (arg === "--cwd") options.cwd = argv[++i];
+    else if (arg === "--override-path") options.overridePath = argv[++i];
+    else if (arg === "--confirm-override") options.confirmed = true;
     else if (arg === "--help" || arg === "-h") options.help = true;
     else if (arg.startsWith("-")) throw new Error(`unknown argument: ${arg}`);
     else positionals.push(arg);
@@ -196,10 +308,21 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     const options = parseArgs(process.argv.slice(2));
     if (options.help) {
       console.log(`Usage: node scripts/allocate-plan.mjs [--slug SLUG] [--repository NAME] [brief...]
+       node scripts/allocate-plan.mjs --override-path PATH [--confirm-override] [--slug SLUG]
 
 Allocates ~/.claude/plans/<repo>/NNN-<slug>.md and a sibling artifact directory.
 Honors PI_PLANS_DIR. Uses an exclusive lock while choosing the next number.
+
+Override paths inside the target repo or PI_PLANS_DIR are auto-allowed.
+Any other override path requires --confirm-override and must be a non-existing
+destination with a non-symlink regular parent (no-clobber).
 `);
+      process.exit(0);
+    }
+    if (options.overridePath) {
+      const result = allocatePlanAtOverride(options);
+      console.log(result.planPath);
+      console.log(result.artifactsDir);
       process.exit(0);
     }
     if (!options.slug && !options.brief) throw new Error("slug or brief is required");

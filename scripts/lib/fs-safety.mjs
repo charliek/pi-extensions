@@ -3,29 +3,31 @@ import {
   closeSync,
   constants,
   existsSync,
+  fstatSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   openSync,
   readdirSync,
   readFileSync,
   readlinkSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
   unlinkSync,
   writeFileSync,
-  writeSync,
 } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 
-const DEFAULT_STALE_LOCK_MS = 30_000;
+const DEFAULT_LOCK_RETRIES = 100;
+const DEFAULT_LOCK_DELAY_MS = 25;
 
 function sleepSync(ms) {
-  const end = Date.now() + ms;
-  while (Date.now() < end) {
-    // intentional short spin for exclusive-lock retries
-  }
+  const sab = new SharedArrayBuffer(4);
+  const ia = new Int32Array(sab);
+  Atomics.wait(ia, 0, 0, ms);
 }
 
 export function sha256Buffer(buffer) {
@@ -38,6 +40,16 @@ export function sha256File(path) {
 
 export function sha256Text(text) {
   return sha256Buffer(Buffer.from(text, "utf8"));
+}
+
+/** Return true when `buffer` is valid UTF-8 (fatal decode). */
+export function isValidUtf8(buffer) {
+  try {
+    new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Resolve and require `candidate` to stay inside `root`. */
@@ -68,8 +80,9 @@ export function assertNotSymlink(path, label = path) {
  * macOS `/var -> /private/var` are out of scope).
  */
 export function assertSafePath(path, { root = null, label = path } = {}) {
-  const resolved = resolve(path);
-  const resolvedRoot = root == null ? null : resolve(root);
+  // Use canonical paths so macOS /var vs /private/var does not false-fail containment.
+  const resolved = canonicalPath(path);
+  const resolvedRoot = root == null ? null : canonicalPath(root);
   if (resolvedRoot != null) {
     const rel = relative(resolvedRoot, resolved);
     if (rel.startsWith("..") || (rel !== "" && resolve(resolvedRoot, rel) !== resolved)) {
@@ -77,7 +90,9 @@ export function assertSafePath(path, { root = null, label = path } = {}) {
     }
   }
 
-  let current = resolved;
+  // Symlink checks walk the logical resolved path (pre-realpath) so link leaves are still refused.
+  let current = resolve(path);
+  const stopAt = root == null ? null : resolve(root);
   while (true) {
     if (existsSync(current)) {
       const stat = lstatSync(current);
@@ -85,7 +100,7 @@ export function assertSafePath(path, { root = null, label = path } = {}) {
         throw new Error(`${label}: refusing to use symlink at ${current}`);
       }
     }
-    if (resolvedRoot == null || current === resolvedRoot) break;
+    if (stopAt == null || current === stopAt || canonicalPath(current) === resolvedRoot) break;
     const parent = dirname(current);
     if (parent === current) break;
     current = parent;
@@ -109,7 +124,7 @@ function writeTempFile(dir, contents, mode) {
   const temp = join(dir, `.${randomBytes(8).toString("hex")}.tmp`);
   const fd = openSync(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, mode);
   try {
-    writeSync(fd, contents);
+    writeFileSync(fd, contents);
   } finally {
     closeSync(fd);
   }
@@ -140,6 +155,9 @@ export function atomicWriteFile(path, contents, { mode = 0o644, root = null } = 
 
 /**
  * Create a new file atomically; fails if the destination already exists (no-clobber).
+ * Fully writes a same-directory temp file, then hard-links it into place and unlinks
+ * the temp. Never writes the destination directly and never falls back to rename
+ * (rename can replace on some platforms).
  */
 export function atomicCreateFile(path, contents, { mode = 0o644, root = null } = {}) {
   const dir = dirname(path);
@@ -152,33 +170,25 @@ export function atomicCreateFile(path, contents, { mode = 0o644, root = null } =
 
   const temp = writeTempFile(dir, contents, mode);
   try {
-    // Prefer link+unlink for no-clobber when rename would replace.
-    try {
-      const fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, mode);
-      try {
-        writeSync(fd, contents);
-      } finally {
-        closeSync(fd);
-      }
-      unlinkSync(temp);
-    } catch (error) {
-      if (error?.code === "EEXIST") {
-        throw new Error(`refusing to clobber existing path: ${path}`);
-      }
-      // Fall back to rename only when exclusive create is unavailable and dest still absent.
-      if (!existsSync(path)) {
-        renameSync(temp, path);
-      } else {
-        throw new Error(`refusing to clobber existing path: ${path}`);
-      }
-    }
+    linkSync(temp, path);
   } catch (error) {
     try {
       unlinkSync(temp);
     } catch {
       // ignore cleanup failures
     }
+    if (error?.code === "EEXIST") {
+      throw new Error(`refusing to clobber existing path: ${path}`);
+    }
     throw error;
+  }
+
+  // The destination now points at the fully written inode. Temp cleanup failure
+  // does not make creation fail or leave a partial destination.
+  try {
+    unlinkSync(temp);
+  } catch {
+    // orphaned temp is harmless and can be cleaned later
   }
 }
 
@@ -197,96 +207,132 @@ export function describePathKind(path) {
   return { kind: "other", target: null, sha256: null, mode: stat.mode };
 }
 
-function processExists(pid) {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return error?.code === "EPERM";
-  }
+function formatLockContents(token) {
+  return `${process.pid}\n${new Date().toISOString()}\n${token}\n`;
 }
 
-export function parseLockContents(text) {
+function parseOwnedLockContents(text, token) {
   const lines = String(text).split(/\r?\n/);
   const pid = Number.parseInt(lines[0] ?? "", 10);
-  const timestamp = Date.parse(lines[1] ?? "");
+  const lockToken = lines[2] ?? "";
   return {
     pid: Number.isInteger(pid) ? pid : null,
-    timestamp: Number.isFinite(timestamp) ? timestamp : null,
+    token: lockToken,
+    owned: lockToken === token,
   };
 }
 
-export function isLockStale(
-  lockPath,
-  { staleMs = DEFAULT_STALE_LOCK_MS, now = Date.now() } = {},
-) {
+/**
+ * Legacy locks are pre-token file locks or proper-lockfile mkdir directories.
+ * These are never reclaimed automatically — remove them manually before retrying.
+ */
+export function isLegacyLockPath(lockPath) {
   if (!existsSync(lockPath)) return false;
-  let mtimeMs = null;
   try {
-    mtimeMs = statSync(lockPath).mtimeMs;
+    const stat = lstatSync(lockPath);
+    if (stat.isDirectory()) return true;
+    if (!stat.isFile()) return true;
+    const lines = readFileSync(lockPath, "utf8").split(/\r?\n/);
+    return lines.length < 3 || !lines[2];
   } catch {
     return true;
   }
-
-  let parsed;
-  try {
-    parsed = parseLockContents(readFileSync(lockPath, "utf8"));
-  } catch {
-    // Incomplete lock files (create-before-write races) are not stale while young.
-    return mtimeMs != null ? now - mtimeMs > staleMs : true;
-  }
-  // A live owner retains the lock regardless of age.
-  if (parsed.pid != null && processExists(parsed.pid)) return false;
-  if (parsed.timestamp != null) {
-    return now - parsed.timestamp > staleMs;
-  }
-  // Unreadable/missing metadata: use mtime so we do not steal a brand-new lock.
-  return mtimeMs != null ? now - mtimeMs > staleMs : true;
 }
 
-function tryRecoverStaleLock(lockPath, options) {
-  if (!isLockStale(lockPath, options)) return false;
+function describeLegacyLock(lockPath) {
+  if (!existsSync(lockPath)) return null;
   try {
+    const stat = lstatSync(lockPath);
+    if (stat.isDirectory()) {
+      return "legacy directory lock (remove manually before retrying)";
+    }
+    return "legacy lock file (remove manually before retrying)";
+  } catch {
+    return "unreadable lock path (remove manually before retrying)";
+  }
+}
+
+function releaseOwnedLock(lockPath, { inode, token }) {
+  if (!existsSync(lockPath)) return;
+  try {
+    const stat = statSync(lockPath);
+    if (stat.ino !== inode) return;
+    const contents = readFileSync(lockPath, "utf8");
+    const parsed = parseOwnedLockContents(contents, token);
+    if (!parsed.owned) return;
     unlinkSync(lockPath);
-    return true;
   } catch {
-    return false;
+    // Fail closed: leave the lock for manual cleanup rather than unlink a foreign holder.
   }
 }
 
-/** Acquire an exclusive lock file; returns a release function via finally. */
+/**
+ * Acquire an exclusive lock via atomic O_EXCL file creation.
+ *
+ * Never reclaims stale, legacy, or foreign locks — a crash or killed holder may
+ * leave the lock path behind and requires explicit manual removal before retrying.
+ * Release only unlinks the lock when the path still references the owned inode and token.
+ */
 export function withExclusiveLock(
   lockPath,
   fn,
-  { retries = 100, delayMs = 25, staleMs = DEFAULT_STALE_LOCK_MS } = {},
+  { retries = DEFAULT_LOCK_RETRIES, delayMs = DEFAULT_LOCK_DELAY_MS } = {},
 ) {
   ensureDir(dirname(lockPath));
-  let lastError;
+
+  const token = randomBytes(16).toString("hex");
+  const payload = formatLockContents(token);
+  let fd;
+  let inode;
+
   for (let attempt = 0; attempt < retries; attempt += 1) {
+    if (isLegacyLockPath(lockPath)) {
+      const reason = describeLegacyLock(lockPath) ?? "legacy lock present";
+      throw new Error(`could not acquire lock ${lockPath}: ${reason}`);
+    }
+
     try {
-      // wx creates+writes without leaving an empty lock file for stale recovery to steal.
-      writeFileSync(lockPath, `${process.pid}\n${new Date().toISOString()}\n`, {
-        flag: "wx",
-        mode: 0o644,
-      });
-      try {
-        return fn();
-      } finally {
+      fd = openSync(lockPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
+      inode = fstatSync(fd).ino;
+      writeFileSync(fd, payload);
+      closeSync(fd);
+      fd = null;
+      break;
+    } catch (error) {
+      if (fd != null) {
         try {
-          unlinkSync(lockPath);
+          closeSync(fd);
         } catch {
           // ignore
         }
+        fd = null;
       }
-    } catch (error) {
-      lastError = error;
-      if (error?.code !== "EEXIST") throw error;
-      if (tryRecoverStaleLock(lockPath, { staleMs })) continue;
-      sleepSync(delayMs);
+      if (error?.code === "EEXIST") {
+        if (isLegacyLockPath(lockPath)) {
+          const reason = describeLegacyLock(lockPath) ?? "legacy lock present";
+          throw new Error(`could not acquire lock ${lockPath}: ${reason}`);
+        }
+        if (attempt + 1 >= retries) {
+          throw new Error(
+            `could not acquire lock ${lockPath}: lock held (remove manually if orphaned)`,
+          );
+        }
+        sleepSync(delayMs);
+        continue;
+      }
+      throw error;
     }
   }
-  throw new Error(`could not acquire lock ${lockPath}: ${lastError?.message ?? "busy"}`);
+
+  if (inode == null) {
+    throw new Error(`could not acquire lock ${lockPath}: busy`);
+  }
+
+  try {
+    return fn();
+  } finally {
+    releaseOwnedLock(lockPath, { inode, token });
+  }
 }
 
 export function readJsonIfExists(path, fallback = null) {
@@ -313,6 +359,66 @@ export function expandHome(path) {
     return join(home, path.slice(2));
   }
   return path;
+}
+
+/** Resolve existing path prefixes through realpath (handles macOS /var -> /private/var). */
+export function canonicalPath(path) {
+  const resolved = resolve(path);
+  if (existsSync(resolved)) {
+    try {
+      return realpathSync(resolved);
+    } catch {
+      return resolved;
+    }
+  }
+  const missing = [];
+  let current = resolved;
+  while (!existsSync(current)) {
+    const parent = dirname(current);
+    if (parent === current) break;
+    missing.unshift(basename(current));
+    current = parent;
+  }
+  try {
+    current = realpathSync(current);
+  } catch {
+    // keep logical prefix
+  }
+  return missing.length > 0 ? join(current, ...missing) : current;
+}
+
+/** True when `candidate` resolves inside `root` (or equals root). */
+export function isPathInside(root, candidate) {
+  const resolvedRoot = canonicalPath(root);
+  const resolved = canonicalPath(candidate);
+  if (resolved === resolvedRoot) return true;
+  const rel = relative(resolvedRoot, resolved);
+  return rel !== "" && !rel.startsWith(`..${sep}`) && !rel.startsWith("..") && resolve(resolvedRoot, rel) === resolved;
+}
+
+/**
+ * Validate a no-clobber destination for plan overrides / custom paths.
+ * Parent must exist as a non-symlink directory; destination must not exist.
+ */
+export function assertSafeCreateDestination(path, { root = null, label = path } = {}) {
+  const resolved = canonicalPath(path);
+  const parent = dirname(resolved);
+  if (!existsSync(parent)) {
+    throw new Error(`${label}: parent directory does not exist: ${parent}`);
+  }
+  if (root != null) {
+    assertSafePath(parent, { root, label: `${label} parent` });
+  } else {
+    assertNotSymlink(parent, `${label} parent`);
+  }
+  const parentStat = lstatSync(parent);
+  if (!parentStat.isDirectory()) {
+    throw new Error(`${label}: parent is not a directory: ${parent}`);
+  }
+  if (existsSync(resolved)) {
+    throw new Error(`${label}: refusing to clobber existing path: ${resolved}`);
+  }
+  return resolved;
 }
 
 /** Capture a directory tree snapshot for non-mutation tests (relative paths -> sha256 or kind). */

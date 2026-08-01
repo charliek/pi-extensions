@@ -54,7 +54,7 @@ node "$PI_EXT_ROOT/scripts/capture-scope.mjs" [flags]
 node "$PI_EXT_ROOT/scripts/build-scope-bundle.mjs" [same flags]
 ```
 
-Record the pre-review `fingerprint`. The bundle includes unified diff plus untracked text; omissions list binary/oversized content. Pass both manifest and bundle to the child — a path/status manifest alone is insufficient.
+Record the pre-review `fingerprint`. The bundle includes unified diff plus untracked text; omissions list binary/oversized/truncated/unreadable content and tracked binary changes. If the bundle result has `complete: false` (or any omissions), **fail closed**: do not launch the reviewer unless the user explicitly acknowledges the omitted paths. Pass both manifest and bundle to the child — a path/status manifest alone is insufficient. `--path` filters must be normalized repository-relative literal file paths (no globs/magic).
 
 ## Subagent
 

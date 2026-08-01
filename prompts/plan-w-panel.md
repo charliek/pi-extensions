@@ -19,7 +19,7 @@ Recognized flags (`--slug`, `--repository`, `--model`, `--thinking`) appear befo
 ## Allocate and write
 
 1. Resolve `PI_EXT_ROOT`: `PI_EXTENSIONS_ROOT` → `packageRoot` in `${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/pi-extensions-managed-agents.json` → abort with setup instructions.
-2. Before default allocation, inspect target-project instructions (`CLAUDE.md`, `AGENTS.md`, etc.) for an **explicit plan location override**; use it when present.
+2. Before default allocation, inspect target-project instructions (`CLAUDE.md`, `AGENTS.md`, etc.) for an **explicit plan location override**. Auto-honor only when the destination is inside the target repo or configured `PI_PLANS_DIR`; any other destination requires explicit user confirmation and the no-clobber override helper (`--override-path` / `--confirm-override`).
 3. Otherwise from the target repository run `node "$PI_EXT_ROOT/scripts/allocate-plan.mjs" [--slug SLUG] [--repository NAME]`; honor `PI_PLANS_DIR` (default `~/.claude/plans`).
 4. Write the returned plan path and use its sibling artifact directory.
 5. Make the plan standalone with: motivation; verified current state with `file:line` evidence; pinned decisions and rejected alternatives; deviations/non-goals; gated `C1..Cn` work breakdown with file lists; indicative file map; measurable acceptance criteria; verification plan; risks/open items/future work; status, plan id, primary repository, artifact path, and a panel-dispositions section.

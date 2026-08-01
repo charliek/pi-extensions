@@ -115,6 +115,8 @@ test("C2 review prompts are report-only and fingerprint scoped changes", () => {
     assert.match(body, /explicit --path|--path FILE/i);
     assert.match(body, /focus text or none/i);
     assert.match(body, /drift|before\/after|post-review fingerprint/i);
+    assert.match(body, /fail closed|complete:\s*false/i);
+    assert.match(body, /literal file paths|repository-relative literal/i);
     assert.doesNotMatch(body, /\$\{focus or "none"\}/);
   }
 });
@@ -126,6 +128,7 @@ test("C2 skills include self-contained scope, bundle, model, and drift workflow"
     assert.match(content, /build-scope-bundle\.mjs/, `${skill} bundle helper`);
     assert.match(content, /PI_EXTENSIONS_ROOT|packageRoot|PI_CODING_AGENT_DIR/, `${skill} root resolution`);
     assert.match(content, /--path|--focus|explicit flags/i, `${skill} explicit flags`);
+    assert.match(content, /fail closed|complete:\s*false/i, `${skill} incomplete bundle`);
     if (skill === "simplify") {
       assert.match(content, /four concurrent|px-simplify-reuse/, `${skill} lenses`);
       assert.match(content, /cursor\/grok-4\.5/, `${skill} default model`);
@@ -226,6 +229,10 @@ test("C3 planning prompts declare canonical commands, schema, and review modes",
   assert.doesNotMatch(plan, /use `\/reload`|\/reload after syncing/i);
   assert.match(plan, /before an optional `--` delimiter|--` delimiter/i);
   assert.match(plan, /explicit plan location override/i);
+  assert.match(plan, /PI_PLANS_DIR/);
+  assert.match(plan, /explicit user confirmation/i);
+  assert.match(plan, /--override-path|--confirm-override/);
+  assert.match(plan, /accepted residual risk|prompt\/fingerprint-enforced/i);
   assert.match(plan, /never forward.*allocate-plan|Pass \*\*only\*\*.*allocate-plan/is);
   assert.match(plan, /wait:\s*true|wait: true/);
   assert.match(plan, /do not embed a self-referential hash/i);
@@ -281,6 +288,7 @@ test("C3 aliases compose canonical /plan behavior and exclude plan-w-glm", () =>
     assert.match(body, /verified.*file:line/is, `${name} must require evidence-backed plan schema`);
     assert.match(body, /before parent edits/i, `${name} must detect reviewer drift before applying findings`);
     assert.match(body, /explicit plan location override/i, `${name} must honor project plan override`);
+    assert.match(body, /PI_PLANS_DIR|explicit user confirmation|--confirm-override/i, `${name} override safety`);
     assert.match(body, /Disposition every finding|disposition every finding/i, `${name} must disposition findings`);
     assert.match(body, /partial/i, `${name} must handle partial failures`);
     assert.match(body, /cost|Cost disclosure/i, `${name} must disclose review cost`);
@@ -308,6 +316,7 @@ test("C3 planning skill is self-contained with allocation, panel, and drift rule
   assert.match(content, /wait:\s*true|wait: true/);
   assert.match(content, /Explicit.*Active.*Ask|explicit.*active.*ask/is);
   assert.match(content, /explicit plan location override/i);
+  assert.match(content, /PI_PLANS_DIR|explicit user confirmation|--confirm-override/i);
   assert.match(content, /natural language|write a plan for/i);
   assert.match(content, /review only|review this plan/i);
   assert.match(content, /Argument parsing|-- delimiter/i);

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { basename, join, resolve, sep } from "node:path";
@@ -7,10 +7,13 @@ import test from "node:test";
 
 import {
   allocatePlan,
+  allocatePlanAtOverride,
+  classifyPlanLocationOverride,
   formatPlanNumber,
   sanitizeRepositoryName,
   sanitizeSlug,
 } from "../scripts/allocate-plan.mjs";
+import { atomicCreateFile, canonicalPath } from "../scripts/lib/fs-safety.mjs";
 
 function initRepo() {
   const root = mkdtempSync(join(tmpdir(), "px-repo-"));
@@ -100,6 +103,73 @@ test("allocatePlan supports explicit repository outside a git checkout", () => {
   });
   assert.equal(basename(allocated.planPath), "001-manual.md");
   assert.ok(allocated.planPath.endsWith(join("custom-repo", "001-manual.md")));
+});
+
+test("atomicCreateFile hard-links full temp and leaves no partial destination on failure", () => {
+  const dir = mkdtempSync(join(tmpdir(), "px-atomic-"));
+  const dest = join(dir, "plan.md");
+  atomicCreateFile(dest, "complete body\n");
+  assert.equal(readFileSync(dest, "utf8"), "complete body\n");
+  assert.throws(() => atomicCreateFile(dest, "other\n"), /clobber/);
+  assert.equal(readFileSync(dest, "utf8"), "complete body\n");
+});
+
+test("plan location overrides auto-allow repo/PI_PLANS_DIR and require confirm otherwise", () => {
+  const repo = initRepo();
+  const plansDir = mkdtempSync(join(tmpdir(), "px-plans-"));
+  const insidePlans = join(plansDir, "custom-plan.md");
+  const classified = classifyPlanLocationOverride({
+    overridePath: insidePlans,
+    cwd: repo,
+    plansDir,
+  });
+  assert.equal(classified.autoAllowed, true);
+  assert.equal(classified.planPath, canonicalPath(insidePlans));
+
+  const insideRepo = join(repo, "docs", "plan.md");
+  mkdirSync(join(repo, "docs"), { recursive: true });
+  const repoClassified = classifyPlanLocationOverride({
+    overridePath: insideRepo,
+    cwd: repo,
+    plansDir,
+  });
+  assert.equal(repoClassified.autoAllowed, true);
+
+  const outside = join(mkdtempSync(join(tmpdir(), "px-outside-plans-")), "danger.md");
+  assert.throws(
+    () => classifyPlanLocationOverride({ overridePath: outside, cwd: repo, plansDir }),
+    /explicit user confirmation/,
+  );
+  const confirmed = classifyPlanLocationOverride({
+    overridePath: outside,
+    cwd: repo,
+    plansDir,
+    confirmed: true,
+  });
+  assert.equal(confirmed.autoAllowed, false);
+  assert.equal(confirmed.confirmed, true);
+
+  const created = allocatePlanAtOverride({
+    overridePath: outside,
+    cwd: repo,
+    plansDir,
+    confirmed: true,
+    slug: "danger",
+    brief: "outside",
+  });
+  assert.equal(existsSync(created.planPath), true);
+  assert.equal(existsSync(created.artifactsDir), true);
+  assert.throws(
+    () =>
+      allocatePlanAtOverride({
+        overridePath: outside,
+        cwd: repo,
+        plansDir,
+        confirmed: true,
+        slug: "danger",
+      }),
+    /clobber|already exists/,
+  );
 });
 
 test("allocatePlan serializes concurrent number selection with a lock", async () => {

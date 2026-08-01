@@ -1,8 +1,10 @@
 import { assertSafeGitRevision } from "./git.mjs";
+import { normalizeLiteralRepoPath } from "./path-filters.mjs";
 
 /**
  * Parse scope CLI flags. Paths and focus require explicit --path / --focus;
  * trailing positional tokens are rejected to avoid ambiguous inference.
+ * --path values are normalized to repository-relative literal file paths.
  */
 export function parseScopeArgs(argv) {
   const options = {
@@ -33,7 +35,7 @@ export function parseScopeArgs(argv) {
     } else if (arg === "--path") {
       const value = argv[++i];
       if (value == null) throw new Error("--path requires a file path");
-      options.paths.push(value);
+      options.paths.push(normalizeLiteralRepoPath(value));
     } else if (arg === "--focus") {
       const value = argv[++i];
       if (value == null) throw new Error("--focus requires text");

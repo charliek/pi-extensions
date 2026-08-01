@@ -65,9 +65,9 @@ node "$PI_EXT_ROOT/scripts/capture-scope.mjs" --path src/foo.ts --focus "error h
 node "$PI_EXT_ROOT/scripts/build-scope-bundle.mjs" --path src/foo.ts --focus "error handling only"
 ```
 
-Record the returned `fingerprint` and file manifest. The bundle helper writes an owner-only file outside the repository containing the unified staged/unstaged or ref diff plus relevant untracked text; binary/oversized paths appear under **Omissions**. Pass the same manifest and bundle path/content to all four lenses — a path/status manifest alone is not enough to review changed lines.
+Record the returned `fingerprint` and file manifest. The bundle helper writes an owner-only file outside the repository containing the unified staged/unstaged or ref diff plus relevant untracked text; binary/oversized/truncated/unreadable paths and tracked binary changes appear under **Omissions**. If the bundle result has `complete: false` (or any omissions), **fail closed**: do not launch lenses unless the user explicitly acknowledges the omitted paths. `--path` filters must be normalized repository-relative literal file paths (no globs/magic). Pass the same manifest and bundle path/content to all four lenses — a path/status manifest alone is not enough to review changed lines.
 
-List untracked files explicitly in the parent summary.
+List untracked files explicitly in the parent summary. Cursor-backed reviewers remain prompt/fingerprint-enforced only (accepted residual risk; not OS-sandboxed).
 
 ## Subagents (launch in one parallel batch)
 

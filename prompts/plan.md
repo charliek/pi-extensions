@@ -67,7 +67,13 @@ Scripts live under `$PI_EXT_ROOT/scripts/`. Honor `PI_PLANS_DIR` (default `~/.cl
 
 ## Plan location
 
-Before default allocation, inspect target-project instructions (for example `CLAUDE.md`, `AGENTS.md`, or repo-specific planning docs) for an **explicit plan location override**. When found, write to that location instead of the default layout.
+Before default allocation, inspect target-project instructions (for example `CLAUDE.md`, `AGENTS.md`, or repo-specific planning docs) for an **explicit plan location override**.
+
+Honor an override automatically only when the destination is contained inside the **target repository** or the configured **`PI_PLANS_DIR`** (default `~/.claude/plans`). Any other destination requires **explicit user confirmation** before writing. Confirmed overrides must use the no-clobber helper (non-existing path, regular non-symlink parent):
+
+```bash
+node "$PI_EXT_ROOT/scripts/allocate-plan.mjs" --override-path PATH [--confirm-override] [--slug SLUG]
+```
 
 Otherwise allocate with the deterministic helper (exclusive lock, next three-digit number, sibling artifact directory):
 
@@ -83,6 +89,8 @@ Pass only recognized helper flags plus a derived slug — not the full brief or 
 ```
 
 Outside a Git repository, pass `--repository <name>` or allocation fails with a useful error.
+
+Cursor-backed reviewers remain prompt/fingerprint-enforced only (accepted residual risk; not OS-sandboxed). Do not attempt to change user-pinned Cursor defaults.
 
 ## Required plan schema
 

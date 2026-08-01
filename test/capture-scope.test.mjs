@@ -116,6 +116,75 @@ test("captureScope fingerprints uncommitted content, types, and symlink targets"
   assert.ok(!staged.files.some((file) => file.path === "file with spaces.txt"));
 });
 
+test("normalizeLiteralRepoPath rejects magic, globs, absolute, and escapes", async () => {
+  const { normalizeLiteralRepoPath } = await import("../scripts/lib/path-filters.mjs");
+  assert.equal(normalizeLiteralRepoPath("./src/foo.ts"), "src/foo.ts");
+  assert.throws(() => normalizeLiteralRepoPath("/tmp/x"), /repository-relative/);
+  assert.throws(() => normalizeLiteralRepoPath("../escape"), /escapes/);
+  assert.throws(() => normalizeLiteralRepoPath("src/*.ts"), /glob/);
+  assert.throws(() => normalizeLiteralRepoPath(":(literal)foo"), /pathspec magic/);
+  assert.throws(() => normalizeLiteralRepoPath("foo?"), /glob/);
+});
+
+test("captureScope path filters match exact/rename paths and reject unmatched", () => {
+  const root = initRepo();
+  writeFileSync(join(root, "keep.txt"), "a\n");
+  writeFileSync(join(root, "skip.txt"), "b\n");
+  writeFileSync(join(root, "before.txt"), "rename\n");
+  git(root, ["add", "."]);
+  git(root, ["commit", "-m", "add"]);
+  writeFileSync(join(root, "keep.txt"), "changed\n");
+  writeFileSync(join(root, "skip.txt"), "changed\n");
+  git(root, ["mv", "before.txt", "after.txt"]);
+
+  const filtered = captureScope({ cwd: root, paths: ["keep.txt"] });
+  assert.deepEqual(
+    filtered.files.map((file) => file.path),
+    ["keep.txt"],
+  );
+
+  const byOld = captureScope({ cwd: root, paths: ["before.txt"] });
+  assert.ok(byOld.files.some((file) => file.status === "renamed" && file.oldPath === "before.txt"));
+
+  assert.throws(
+    () => captureScope({ cwd: root, paths: ["missing.txt"] }),
+    /unmatched/,
+  );
+});
+
+test("captureScope fingerprint changes across branch names at the same commit", () => {
+  const root = initRepo();
+  writeFileSync(join(root, "tracked.txt"), "changed\n");
+  git(root, ["branch", "alt"]);
+  const onMain = captureScope({ cwd: root });
+  git(root, ["checkout", "alt"]);
+  const onAlt = captureScope({ cwd: root });
+  assert.equal(onAlt.head, onMain.head);
+  assert.notEqual(onAlt.branch, onMain.branch);
+  assert.notEqual(onAlt.fingerprint, onMain.fingerprint);
+});
+
+test("captureScope fingerprint changes across branch and repo identity", () => {
+  const root = initRepo();
+  writeFileSync(join(root, "tracked.txt"), "changed\n");
+  const onMain = captureScope({ cwd: root });
+  git(root, ["checkout", "-b", "feature"]);
+  writeFileSync(join(root, "extra.txt"), "x\n");
+  git(root, ["add", "extra.txt"]);
+  git(root, ["commit", "-m", "feature commit"]);
+  // Same uncommitted edit to tracked.txt, but HEAD and index listing differ.
+  writeFileSync(join(root, "tracked.txt"), "changed\n");
+  const onFeature = captureScope({ cwd: root });
+  assert.notEqual(onFeature.fingerprint, onMain.fingerprint);
+  assert.notEqual(onFeature.head, onMain.head);
+  assert.ok(onFeature.repoIdentity.includes(root));
+
+  const other = initRepo();
+  writeFileSync(join(other, "tracked.txt"), "changed\n");
+  const otherScope = captureScope({ cwd: other });
+  assert.notEqual(otherScope.fingerprint, onMain.fingerprint);
+});
+
 test("captureScope ref mode rejects option injection; single ref uses REV^!", () => {
   const root = initRepo();
   writeFileSync(join(root, "old.txt"), "a\n");

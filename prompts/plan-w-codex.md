@@ -19,7 +19,7 @@ Recognized flags (`--slug`, `--repository`, `--model`, `--thinking`) appear befo
 ## Workflow
 
 1. Resolve `PI_EXT_ROOT`: `PI_EXTENSIONS_ROOT` → `packageRoot` in `${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/pi-extensions-managed-agents.json` → abort with setup instructions.
-2. Before default allocation, inspect target-project instructions for an **explicit plan location override**; use it when present.
+2. Before default allocation, inspect target-project instructions for an **explicit plan location override**. Auto-honor only when inside the target repo or configured `PI_PLANS_DIR`; any other destination requires explicit user confirmation and the no-clobber override helper (`--override-path` / `--confirm-override`).
 3. Otherwise in the target repo run `node "$PI_EXT_ROOT/scripts/allocate-plan.mjs" [--slug SLUG] [--repository NAME]`; honor `PI_PLANS_DIR`.
 4. Write a standalone plan at the returned path with motivation, verified `file:line` current state, pinned decisions/rejected alternatives, non-goals, gated `C1..Cn` work breakdown and files, file map, acceptance criteria, verification, risks/open items, reviewer-dispositions section, status, plan id, primary repository, and artifact path. Use the returned sibling artifact directory.
 5. Record plan hash and **required** target-repo fingerprint (`capture-scope.mjs`) before review.

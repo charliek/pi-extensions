@@ -8,6 +8,11 @@ import {
   refDiffSpec,
   validateGitRevision,
 } from "./lib/git.mjs";
+import {
+  applyLiteralPathFilters,
+  normalizeLiteralRepoPath,
+} from "./lib/path-filters.mjs";
+import { parseScopeArgs } from "./lib/scope-args.mjs";
 
 const UNMERGED_XY = new Set(["DD", "AU", "UD", "UA", "DU", "AA", "UU"]);
 
@@ -18,6 +23,12 @@ export {
   refDiffSpec,
   validateGitRevision,
 } from "./lib/git.mjs";
+
+export {
+  applyLiteralPathFilters,
+  literalPathspecs,
+  normalizeLiteralRepoPath,
+} from "./lib/path-filters.mjs";
 
 /**
  * Parse `git status --porcelain=v1 -z` into structured entries.
@@ -171,6 +182,49 @@ function fingerprintEntry(root, entry, mode) {
   return parts.join("\t");
 }
 
+function resolveHead(root) {
+  try {
+    return git(root, ["rev-parse", "--verify", "--quiet", "HEAD"]).trim();
+  } catch {
+    return "HEAD:unborn";
+  }
+}
+
+/**
+ * Symbolic branch identity (refs/heads/*) or a detached marker.
+ * Same commit on different branch names must produce different fingerprints.
+ */
+export function resolveBranchIdentity(root) {
+  try {
+    return git(root, ["symbolic-ref", "-q", "HEAD"]).trim();
+  } catch {
+    return "HEAD:detached";
+  }
+}
+
+function indexListingHash(root) {
+  try {
+    return sha256Text(git(root, ["ls-files", "-s", "-z"]));
+  } catch {
+    return "index:unavailable";
+  }
+}
+
+/**
+ * Canonical repo identity: resolved root plus optional origin URL.
+ * Clean branch/repo switches change this even when file contents match.
+ */
+export function canonicalRepoIdentity(root) {
+  const resolvedRoot = resolve(root);
+  let origin = "";
+  try {
+    origin = git(root, ["config", "--get", "remote.origin.url"]).trim();
+  } catch {
+    origin = "";
+  }
+  return `${resolvedRoot}\norigin:${origin}`;
+}
+
 export function captureScope({
   cwd = process.cwd(),
   mode = "uncommitted",
@@ -179,6 +233,8 @@ export function captureScope({
 } = {}) {
   const root = detectGitRoot(cwd);
   if (!root) throw new Error(`not a git repository: ${cwd}`);
+
+  const normalizedPaths = paths.map((path) => normalizeLiteralRepoPath(path));
 
   let entries = [];
   let baseRef = null;
@@ -229,13 +285,7 @@ export function captureScope({
     throw new Error(`unsupported scope mode: ${mode}`);
   }
 
-  if (paths.length > 0) {
-    const wanted = new Set(paths.map((p) => p.replace(/^\.\//, "")));
-    entries = entries.filter(
-      (entry) => wanted.has(entry.path) || (entry.oldPath && wanted.has(entry.oldPath)),
-    );
-  }
-
+  entries = applyLiteralPathFilters(entries, normalizedPaths);
   entries = sortEntries(entries);
 
   const files = entries.map((entry) => ({
@@ -247,9 +297,24 @@ export function captureScope({
     contentFingerprint: fingerprintEntry(root, entry, mode),
   }));
 
+  const head = resolveHead(root);
+  const branch = resolveBranchIdentity(root);
+  const indexHash = indexListingHash(root);
+  const repoIdentity = canonicalRepoIdentity(root);
   const canonical = files.map((file) => file.contentFingerprint).join("\n");
   const fingerprint = sha256Text(
-    `${mode}\n${baseRef ?? ""}\n${rangePatchHash ?? ""}\n${canonical}\n`,
+    [
+      `identity:${sha256Text(repoIdentity)}`,
+      `root:${resolve(root)}`,
+      `head:${head}`,
+      `branch:${branch}`,
+      `index:${indexHash}`,
+      `mode:${mode}`,
+      `ref:${baseRef ?? ""}`,
+      `paths:${normalizedPaths.join("\0")}`,
+      `rangePatch:${rangePatchHash ?? ""}`,
+      `files:${canonical}`,
+    ].join("\n"),
   );
 
   return {
@@ -257,6 +322,11 @@ export function captureScope({
     root,
     mode,
     ref: baseRef,
+    paths: normalizedPaths,
+    head,
+    branch,
+    indexHash,
+    repoIdentity,
     files,
     fingerprint,
     capturedAt: new Date().toISOString(),
@@ -308,8 +378,6 @@ export function parseNameStatusZ(buffer) {
   return entries;
 }
 
-import { parseScopeArgs } from "./lib/scope-args.mjs";
-
 const scriptPath = fileURLToPath(import.meta.url);
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   try {
@@ -319,6 +387,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
 
 Capture a deterministic change-scope manifest for simplify/review workflows.
 Use explicit --path and --focus; positional arguments are rejected.
+--path values must be normalized repository-relative literal file paths (no globs/magic).
 Single --ref revisions diff that commit only (REV^!); ranges stay ranges.
 `);
       process.exit(0);

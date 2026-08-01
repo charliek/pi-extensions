@@ -216,8 +216,60 @@ test("buildScopeBundle truncates oversized unified diff within total limit", () 
   const body = readFileSync(result.bundlePath, "utf8");
 
   assert.equal(result.truncated, true);
+  assert.equal(result.complete, false);
   assert.ok(result.omitted.some((item) => item.path === "(unified diff)" && item.reason === "truncated"));
   assert.match(body, /\(unified diff\): truncated/);
   assert.match(body, /truncated to total byte limit/);
+  assert.match(body, /complete: false/);
   assert.ok(result.diffBytes > maxTotalBytes);
+});
+
+test("buildScopeBundle sets complete:false for invalid UTF-8 without NUL bytes", () => {
+  const root = initRepo();
+  const invalid = Buffer.from([0xc3, 0x28, 0x61, 0x0a]);
+  writeFileSync(join(root, "bad-utf8.txt"), invalid);
+  writeFileSync(join(root, "tracked.txt"), "changed\n");
+
+  const result = buildScopeBundle({ cwd: root });
+  assert.equal(result.complete, false);
+  assert.ok(result.omitted.some((item) => item.path === "bad-utf8.txt" && item.reason === "invalid-utf8"));
+  const body = readFileSync(result.bundlePath, "utf8");
+  assert.match(body, /bad-utf8\.txt: invalid-utf8/);
+  assert.match(body, /complete: false/);
+});
+
+test("buildScopeBundle sets complete:false for binary/oversized omissions including tracked binaries", () => {
+  const root = initRepo();
+  writeFileSync(join(root, "notes.txt"), "hello\n");
+  writeFileSync(join(root, "blob.bin"), Buffer.from([0, 1, 2, 3, 0, 9]));
+  git(root, ["add", "blob.bin"]);
+  git(root, ["commit", "-m", "add binary"]);
+  writeFileSync(join(root, "blob.bin"), Buffer.from([9, 0, 8, 0]));
+  writeFileSync(join(root, "untracked.bin"), Buffer.from([0, 7]));
+
+  const result = buildScopeBundle({ cwd: root });
+  assert.equal(result.complete, false);
+  assert.ok(result.omitted.some((item) => item.path === "blob.bin" && item.reason === "binary"));
+  assert.ok(result.omitted.some((item) => item.path === "untracked.bin" && item.reason === "binary"));
+  const body = readFileSync(result.bundlePath, "utf8");
+  assert.match(body, /complete: false/);
+});
+
+test("buildScopeBundle rejects unmatched path filters and uses literal pathspecs for renames", () => {
+  const root = initRepo();
+  writeFileSync(join(root, "before.txt"), "rename-me\n");
+  git(root, ["add", "before.txt"]);
+  git(root, ["commit", "-m", "add before"]);
+  git(root, ["mv", "before.txt", "after.txt"]);
+
+  assert.throws(() => buildScopeBundle({ cwd: root, paths: ["nope.txt"] }), /unmatched/);
+  const byOld = buildScopeBundle({ cwd: root, paths: ["before.txt"] });
+  assert.equal(byOld.complete, true);
+  assert.ok(byOld.scope.files.some((file) => file.oldPath === "before.txt"));
+});
+
+test("parseScopeArgs rejects path magic at CLI boundary", () => {
+  assert.throws(() => parseScopeArgs(["--path", "src/*.ts"]), /glob/);
+  assert.throws(() => parseScopeArgs(["--path", "/abs/path"]), /repository-relative/);
+  assert.throws(() => parseScopeArgs(["--path", ":(exclude)foo"]), /pathspec magic/);
 });

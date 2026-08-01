@@ -27,13 +27,19 @@ Resolve `PI_EXT_ROOT`: `PI_EXTENSIONS_ROOT` env → `packageRoot` in `$PI_CODING
 2. **Active** plan named in conversation — use when reviewing without an explicit path.
 3. **Ask** — when neither resolves, ask the user; do not guess from unrelated recent files.
 
-For **new** plans: inspect target-project instructions (`CLAUDE.md`, `AGENTS.md`, etc.) for an explicit plan location override before default allocation. Otherwise:
+For **new** plans: inspect target-project instructions (`CLAUDE.md`, `AGENTS.md`, etc.) for an explicit plan location override before default allocation. Auto-honor overrides only when the destination is inside the target repository or configured `PI_PLANS_DIR`. Any other destination requires explicit user confirmation and the no-clobber helper:
+
+```bash
+node "$PI_EXT_ROOT/scripts/allocate-plan.mjs" --override-path PATH [--confirm-override] [--slug SLUG]
+```
+
+Otherwise:
 
 ```bash
 node "$PI_EXT_ROOT/scripts/allocate-plan.mjs" [--slug SLUG] [--repository NAME]
 ```
 
-Pass only helper flags plus derived slug — not workflow flags or raw brief text. Writes `~/.claude/plans/<repo>/NNN-<slug>.md` plus sibling artifact directory. Honors `PI_PLANS_DIR`.
+Pass only helper flags plus derived slug — not workflow flags or raw brief text. Writes `~/.claude/plans/<repo>/NNN-<slug>.md` plus sibling artifact directory. Honors `PI_PLANS_DIR`. Cursor-backed reviewers remain prompt/fingerprint-enforced only (accepted residual risk).
 
 ## Argument parsing (`/plan`)
 

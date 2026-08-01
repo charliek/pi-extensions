@@ -18,8 +18,9 @@ Resolve `PI_EXT_ROOT`: `PI_EXTENSIONS_ROOT` env → `packageRoot` in `$PI_CODING
 
 ## Scope and bundle (explicit flags only)
 
-1. `capture-scope.mjs` then `build-scope-bundle.mjs` with identical flags. Single `--ref` = that commit only (`REV^!`); ranges unchanged.
+1. `capture-scope.mjs` then `build-scope-bundle.mjs` with identical flags. Single `--ref` = that commit only (`REV^!`); ranges unchanged. `--path` values must be normalized repository-relative literal file paths.
 2. Record pre-review `fingerprint`. Pass manifest + bundle to the reviewer.
+3. If the bundle has `complete: false` (or any omissions), **fail closed** unless the user explicitly acknowledges the omitted paths.
 
 ## Model routing
 
@@ -27,7 +28,7 @@ First match wins: `--model` / `--thinking` → composed-workflow overrides → d
 
 ## Workflow
 
-1. Capture scope + bundle once.
+1. Capture scope + bundle once; stop on incomplete bundles without user acknowledgment.
 2. Launch one read-only subagent: `px-adversarial-reviewer`.
 3. After the reviewer returns, re-run `capture-scope.mjs` with the same flags. If fingerprint changed, flag worktree drift with before/after values.
 4. Present findings sorted by severity; **do not edit** unless the user asks afterward.

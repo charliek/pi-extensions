@@ -183,6 +183,66 @@ function manifestsEquivalent(existing, next) {
   return true;
 }
 
+function buildExpectedManifest(sources, pkg, packageRoot) {
+  return {
+    schemaVersion: MANIFEST_SCHEMA_VERSION,
+    packageName: pkg.name,
+    packageVersion: pkg.version,
+    packageRoot: resolve(packageRoot),
+    files: Object.fromEntries(
+      sources.map((source) => [
+        source.name,
+        {
+          sha256: source.sha256,
+          source: `agents/${source.name}`,
+        },
+      ]),
+    ),
+  };
+}
+
+function describeManifestMismatch(existing, expected) {
+  if (!existing) {
+    return { reason: "missing" };
+  }
+  if (existing.packageName !== expected.packageName) {
+    return {
+      reason: "package-name",
+      manifestName: existing.packageName,
+      expectedName: expected.packageName,
+    };
+  }
+  if (existing.packageRoot !== expected.packageRoot) {
+    return {
+      reason: "package-root",
+      manifestRoot: existing.packageRoot,
+      expectedRoot: expected.packageRoot,
+    };
+  }
+  if (existing.packageVersion !== expected.packageVersion) {
+    return {
+      reason: "package-version",
+      manifestVersion: existing.packageVersion,
+      expectedVersion: expected.packageVersion,
+    };
+  }
+  const left = existing.files ?? {};
+  const right = expected.files ?? {};
+  const leftKeys = Object.keys(left).sort();
+  const rightKeys = Object.keys(right).sort();
+  if (leftKeys.length !== rightKeys.length || leftKeys.some((key, index) => key !== rightKeys[index])) {
+    return { reason: "files", manifestFiles: leftKeys, expectedFiles: rightKeys };
+  }
+  for (const name of leftKeys) {
+    const a = left[name];
+    const b = right[name];
+    if (a.sha256 !== b.sha256 || a.source !== b.source) {
+      return { reason: "file-metadata", name };
+    }
+  }
+  return null;
+}
+
 function planSyncActions({ sources, agentsDir, existing, force, home }) {
   const plannedFiles = Object.fromEntries(
     sources.map((source) => [
@@ -214,12 +274,20 @@ function planSyncActions({ sources, agentsDir, existing, force, home }) {
       continue;
     }
 
-    if (previous && previous.sha256 === currentHash && currentHash === source.sha256) {
-      actions.push({ op: "unchanged", name: source.name, destPath, expectedHash: currentHash });
+    // Destination already matches the intended source (including interrupted-sync
+    // recovery where the file was written but the manifest was not updated yet).
+    if (currentHash === source.sha256) {
+      actions.push({
+        op: "unchanged",
+        name: source.name,
+        destPath,
+        expectedHash: currentHash,
+        reconciled: Boolean(previous && previous.sha256 !== currentHash),
+      });
       continue;
     }
 
-    if (previous && previous.sha256 === currentHash && currentHash !== source.sha256) {
+    if (previous && previous.sha256 === currentHash) {
       actions.push({
         op: "update",
         name: source.name,
@@ -249,32 +317,21 @@ function planSyncActions({ sources, agentsDir, existing, force, home }) {
       continue;
     }
 
-    if (previous.sha256 !== currentHash) {
-      const message = conflictMessage(source.name, "destination was modified locally");
-      if (force) {
-        actions.push({
-          op: "update",
-          name: source.name,
-          destPath,
-          content: source.content,
-          expectedHash: currentHash,
-          sourceSha256: source.sha256,
-          forced: true,
-        });
-      } else {
-        errors.push(`${message} (use --force to overwrite managed targets)`);
-      }
-      continue;
+    // previous.sha256 !== currentHash && currentHash !== source.sha256
+    const message = conflictMessage(source.name, "destination was modified locally");
+    if (force) {
+      actions.push({
+        op: "update",
+        name: source.name,
+        destPath,
+        content: source.content,
+        expectedHash: currentHash,
+        sourceSha256: source.sha256,
+        forced: true,
+      });
+    } else {
+      errors.push(`${message} (use --force to overwrite managed targets)`);
     }
-
-    actions.push({
-      op: "update",
-      name: source.name,
-      destPath,
-      content: source.content,
-      expectedHash: currentHash,
-      sourceSha256: source.sha256,
-    });
   }
 
   for (const name of Object.keys(existing?.files ?? {})) {
@@ -368,6 +425,9 @@ export function inspectSyncAgents({
     home,
   });
 
+  const expectedManifest = buildExpectedManifest(sources, pkg, root);
+  const manifestMismatch = describeManifestMismatch(existing, expectedManifest);
+
   const versionSkew =
     existing && existing.packageVersion && existing.packageVersion !== pkg.version
       ? {
@@ -381,16 +441,19 @@ export function inspectSyncAgents({
     error.code = "SYNC_CONFLICT";
     error.errors = errors;
     error.versionSkew = versionSkew;
+    error.manifestMismatch = manifestMismatch;
     throw error;
   }
 
   const pending = actions.filter((action) => action.op !== "unchanged");
   return {
-    ok: pending.length === 0 && !versionSkew && !wouldMigrate,
+    ok: pending.length === 0 && !manifestMismatch && !wouldMigrate,
     check: true,
     actions,
     versionSkew,
+    manifestMismatch,
     wouldMigrate,
+    expectedManifest,
     package: pkg,
     agentHome: home,
     manifestPath,
@@ -652,6 +715,9 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     if (options.check) {
       if (!result.ok) {
         console.error("Agent sync check failed.");
+        if (result.manifestMismatch) {
+          console.error(`Manifest mismatch: ${result.manifestMismatch.reason}`);
+        }
         if (result.versionSkew) {
           console.error(
             `Version skew: manifest ${result.versionSkew.manifestVersion} vs package ${result.versionSkew.packageVersion}`,

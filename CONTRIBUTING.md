@@ -69,7 +69,10 @@ Workflow resources must remain portable. They may inherit target-project instruc
 - **Model routing:** Defaults live in prompts/skills (e.g. simplify lenses and plan risk use `cursor/grok-4.5` at `high`); agents stay overridable via `--model` / `--thinking`.
 - **Command collisions:** Prompt templates use **first-discovered wins**; extension commands get numeric suffixes when names collide. Prefer fixing load order (`pi config`) over renaming user-facing prompt commands.
 - **Partial failures:** Parents continue with successful subagents, report failures, disposition all findings, re-fingerprint before edits.
-- **Planning path:** Default `~/.claude/plans/<repo>/NNN-<slug>.md`; honor explicit project overrides; use `allocate-plan.mjs`.
+- **Planning path:** Default `~/.claude/plans/<repo>/NNN-<slug>.md`; auto-honor project overrides only inside the target repo or `PI_PLANS_DIR` (else confirm + no-clobber helper); use `allocate-plan.mjs`.
+- **Sync locks:** `withExclusiveLock` uses atomic O_EXCL file creation and never reclaims stale or legacy lock paths. A crash may leave a lock file behind — remove it manually before retrying.
+- **Incomplete bundles:** Parents/skills fail closed when `complete: false` unless the user acknowledges omitted paths.
+- **Cursor residual risk:** Cursor-native tools are prompt-enforced only; do not claim OS sandboxing.
 
 ## Testing expectations
 

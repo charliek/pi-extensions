@@ -18,9 +18,10 @@ Resolve `PI_EXT_ROOT`: `PI_EXTENSIONS_ROOT` env → `packageRoot` in `$PI_CODING
 
 ## Scope and bundle (explicit flags only)
 
-1. `node "$PI_EXT_ROOT/scripts/capture-scope.mjs"` with `--staged`, `--ref`, `--path`, or `--focus` as needed. Positional scope inference is rejected.
+1. `node "$PI_EXT_ROOT/scripts/capture-scope.mjs"` with `--staged`, `--ref`, `--path`, or `--focus` as needed. Positional scope inference is rejected. `--path` values must be normalized repository-relative literal file paths.
 2. `node "$PI_EXT_ROOT/scripts/build-scope-bundle.mjs"` with the **same flags**. Single `--ref` revisions diff that commit only (`REV^!`); ranges stay ranges.
 3. Record pre-review `fingerprint`. Pass manifest + owner-only bundle path to all lenses.
+4. If the bundle has `complete: false` (or any omissions), **fail closed** unless the user explicitly acknowledges the omitted paths.
 
 ## Model routing
 
@@ -28,7 +29,7 @@ Per lens, first match wins: `--model` / `--thinking` flags → composed-workflow
 
 ## Workflow
 
-1. Capture scope + bundle once.
+1. Capture scope + bundle once; stop on incomplete bundles without user acknowledgment.
 2. Launch **four concurrent** read-only subagents (`run_in_background: true`, one tool message): `px-simplify-reuse`, `px-simplify-structure`, `px-simplify-efficiency`, `px-simplify-altitude`.
 3. Collect in one parallel batch of `get_subagent_result` with `wait: true`; continue on partial failures; do not apply findings from failed lenses.
 4. Deduplicate findings; present disposition table (apply | skip | needs-user).

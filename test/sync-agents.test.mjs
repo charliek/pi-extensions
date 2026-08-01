@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 
-import { isLockStale, sha256Text, snapshotFilesystem, withExclusiveLock } from "../scripts/lib/fs-safety.mjs";
+import { withExclusiveLock, sha256Text, snapshotFilesystem } from "../scripts/lib/fs-safety.mjs";
 import {
   agentsDirFor,
   inspectSyncAgents,
@@ -243,6 +243,53 @@ test("inspectSyncAgents detects legacy manifest migration without writing", () =
   );
 });
 
+test("sync --check fails when manifest is missing even if destinations match", () => {
+  const packageRoot = makePackage({
+    "px-code-reviewer.md": agentDoc("code review"),
+  });
+  const agentHome = mkdtempSync(join(tmpdir(), "px-home-"));
+  mkdirSync(agentsDirFor(agentHome), { recursive: true });
+  writeFileSync(join(agentsDirFor(agentHome), "px-code-reviewer.md"), agentDoc("code review"));
+
+  const check = syncAgents({ packageRoot, agentHome, check: true });
+  assert.equal(check.ok, false);
+  assert.equal(check.manifestMismatch?.reason, "missing");
+});
+
+test("sync --check fails when manifest metadata is stale but destinations match", () => {
+  const packageRoot = makePackage({
+    "px-code-reviewer.md": agentDoc("v2"),
+  });
+  const agentHome = mkdtempSync(join(tmpdir(), "px-home-"));
+  mkdirSync(agentsDirFor(agentHome), { recursive: true });
+  writeFileSync(join(agentsDirFor(agentHome), "px-code-reviewer.md"), agentDoc("v2"));
+  writeFileSync(
+    manifestPathFor(agentHome),
+    JSON.stringify(
+      {
+        schemaVersion: 1,
+        packageName: "pi-extensions",
+        packageVersion: "0.1.0",
+        packageRoot,
+        updatedAt: new Date().toISOString(),
+        files: {
+          "px-code-reviewer.md": {
+            sha256: sha256Text(agentDoc("v1")),
+            source: "agents/px-code-reviewer.md",
+          },
+        },
+      },
+      null,
+      2,
+    ),
+  );
+
+  const check = syncAgents({ packageRoot, agentHome, check: true });
+  assert.equal(check.ok, false);
+  assert.equal(check.manifestMismatch?.reason, "file-metadata");
+  assert.ok(check.actions.every((action) => action.op === "unchanged"));
+});
+
 test("sync --check fails for stale missing destinations", () => {
   const packageRoot = makePackage({
     "px-code-reviewer.md": agentDoc("code review"),
@@ -358,18 +405,158 @@ test("sync updates when package content changes and previous hash matches", () =
   );
 });
 
-test("stale locks are recovered using pid and age", () => {
+test("sync reconciles interrupted write when destination already matches source", () => {
+  const packageRoot = makePackage({
+    "px-code-reviewer.md": agentDoc("v2"),
+  });
+  const agentHome = mkdtempSync(join(tmpdir(), "px-home-"));
+  // Prior manifest points at v1, but destination was already rewritten to v2 (crash after write).
+  mkdirSync(agentsDirFor(agentHome), { recursive: true });
+  writeFileSync(join(agentsDirFor(agentHome), "px-code-reviewer.md"), agentDoc("v2"));
+  writeFileSync(
+    manifestPathFor(agentHome),
+    JSON.stringify(
+      {
+        schemaVersion: 1,
+        packageName: "pi-extensions",
+        packageVersion: "0.1.0",
+        packageRoot,
+        updatedAt: new Date().toISOString(),
+        files: {
+          "px-code-reviewer.md": {
+            sha256: sha256Text(agentDoc("v1")),
+            source: "agents/px-code-reviewer.md",
+          },
+        },
+      },
+      null,
+      2,
+    ),
+  );
+
+  const result = syncAgents({ packageRoot, agentHome });
+  assert.equal(result.ok, true);
+  assert.equal(result.rewritten, true);
+  assert.ok(result.actions.some((action) => action.op === "unchanged" && action.reconciled));
+  assert.equal(
+    readFileSync(join(agentsDirFor(agentHome), "px-code-reviewer.md"), "utf8"),
+    agentDoc("v2"),
+  );
+  const manifest = JSON.parse(readFileSync(manifestPathFor(agentHome), "utf8"));
+  assert.equal(manifest.files["px-code-reviewer.md"].sha256, sha256Text(agentDoc("v2")));
+});
+
+test("sync reconciles intended stale deletion that is already absent", () => {
+  const packageRoot = makePackage({
+    "px-code-reviewer.md": agentDoc("code review"),
+  });
+  const agentHome = mkdtempSync(join(tmpdir(), "px-home-"));
+  syncAgents({ packageRoot, agentHome });
+
+  // Manifest still lists a removed agent whose file is already gone (interrupted delete).
+  const manifestPath = manifestPathFor(agentHome);
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  manifest.files["px-gone.md"] = {
+    sha256: sha256Text("gone\n"),
+    source: "agents/px-gone.md",
+  };
+  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+
+  const result = syncAgents({ packageRoot, agentHome });
+  assert.equal(result.ok, true);
+  const next = JSON.parse(readFileSync(manifestPath, "utf8"));
+  assert.equal(next.files["px-gone.md"], undefined);
+  assert.ok(result.actions.some((action) => action.op === "stale-missing" && action.name === "px-gone.md"));
+});
+
+test("withExclusiveLock refuses legacy file locks without reclaiming them", () => {
   const dir = mkdtempSync(join(tmpdir(), "px-lock-"));
   const lockPath = join(dir, ".lock");
   writeFileSync(lockPath, "999999\n2000-01-01T00:00:00.000Z\n");
-  assert.equal(isLockStale(lockPath, { staleMs: 1000 }), true);
 
-  let ran = false;
-  withExclusiveLock(lockPath, () => {
-    ran = true;
-  }, { staleMs: 1000, retries: 5, delayMs: 1 });
-  assert.equal(ran, true);
+  assert.throws(
+    () =>
+      withExclusiveLock(lockPath, () => {
+        /* unreachable */
+      }, { retries: 1, delayMs: 1 }),
+    /legacy lock file/,
+  );
+});
 
-  writeFileSync(lockPath, `${process.pid}\n${new Date().toISOString()}\n`);
-  assert.equal(isLockStale(lockPath, { staleMs: 30_000 }), false);
+test("withExclusiveLock refuses legacy directory locks without reclaiming them", () => {
+  const dir = mkdtempSync(join(tmpdir(), "px-lock-"));
+  const lockPath = join(dir, ".lock");
+  mkdirSync(lockPath);
+
+  assert.throws(
+    () =>
+      withExclusiveLock(lockPath, () => {
+        /* unreachable */
+      }, { retries: 1, delayMs: 1 }),
+    /legacy directory lock/,
+  );
+});
+
+test("withExclusiveLock leaves orphan locks for manual cleanup", () => {
+  const dir = mkdtempSync(join(tmpdir(), "px-lock-"));
+  const lockPath = join(dir, ".lock");
+  writeFileSync(lockPath, `${process.pid}\n${new Date().toISOString()}\norphan-token\n`);
+
+  assert.throws(
+    () =>
+      withExclusiveLock(lockPath, () => {
+        /* unreachable */
+      }, { retries: 2, delayMs: 1 }),
+    /lock held \(remove manually if orphaned\)/,
+  );
+  assert.equal(existsGone(lockPath), false);
+});
+
+test("withExclusiveLock enforces multi-process exclusivity", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "px-lock-"));
+  const lockPath = join(dir, ".exclusive.lock");
+  const script = `
+    import { withExclusiveLock } from ${JSON.stringify(resolve(import.meta.dirname, "../scripts/lib/fs-safety.mjs"))};
+    import { appendFileSync } from "node:fs";
+    const lockPath = process.argv[2];
+    const marker = process.argv[3];
+    withExclusiveLock(lockPath, () => {
+      appendFileSync(marker, \`start:\${process.pid}\\n\`);
+      const end = Date.now() + 200;
+      while (Date.now() < end) {}
+      appendFileSync(marker, \`end:\${process.pid}\\n\`);
+    }, { retries: 200, delayMs: 10 });
+  `;
+  const scriptPath = join(dir, "hold.mjs");
+  const marker = join(dir, "marker.txt");
+  writeFileSync(scriptPath, script);
+
+  const { spawn } = await import("node:child_process");
+  const run = () =>
+    new Promise((resolvePromise, reject) => {
+      const child = spawn(process.execPath, [scriptPath, lockPath, marker], {
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let stderr = "";
+      child.stderr.setEncoding("utf8");
+      child.stderr.on("data", (chunk) => {
+        stderr += chunk;
+      });
+      child.on("error", reject);
+      child.on("close", (code) => {
+        if (code !== 0) reject(new Error(stderr || `lock child exited ${code}`));
+        else resolvePromise();
+      });
+    });
+
+  await Promise.all([run(), run()]);
+  const lines = readFileSync(marker, "utf8").trim().split("\n");
+  assert.equal(lines.length, 4);
+  // Exclusive sections must nest as start/end pairs without interleaving.
+  assert.match(lines[0], /^start:/);
+  assert.match(lines[1], /^end:/);
+  assert.match(lines[2], /^start:/);
+  assert.match(lines[3], /^end:/);
+  assert.equal(lines[0].slice(6), lines[1].slice(4));
+  assert.equal(lines[2].slice(6), lines[3].slice(4));
 });

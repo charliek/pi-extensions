@@ -189,9 +189,13 @@ If one or more subagents fail, timeout, or return malformed output:
 
 Parents must disposition every finding (`adopted` | `adapted` | `rejected` | `deferred`) and re-fingerprint plan/scope before applying feedback.
 
-### Cursor reviewer caveat (prompt-enforced)
+### Cursor reviewer caveat (prompt-enforced, accepted residual risk)
 
-Cursor SDK models retain **Cursor-native tools** independently of Tintinweb's Pi tool allowlist. Grok-backed reviewers disable Pi `bash`/`edit`/`write`, load only `pi-cursor-sdk`, instruct read-only behavior, and fingerprint the worktree — but they are **not** OS-sandboxed. Documentation and tests distinguish Pi tool restriction from Cursor prompt enforcement. Do not claim capability-level immutability for Cursor-backed reviewers.
+Cursor SDK models retain **Cursor-native tools** independently of Tintinweb's Pi tool allowlist. Grok-backed reviewers disable Pi `bash`/`edit`/`write`, load only `pi-cursor-sdk`, instruct read-only behavior, and fingerprint the worktree — but they are **not** OS-sandboxed. This package does **not** attempt to solve Cursor-native tool sandbox limitations or change user-pinned Cursor defaults. Documentation and tests distinguish Pi tool restriction from Cursor prompt enforcement. Treat Cursor-backed immutability as prompt/fingerprint enforcement only — an accepted residual risk.
+
+### Incomplete scope bundles
+
+`build-scope-bundle.mjs` sets `complete: false` when any truncation, max-buffer, binary, oversized, or unreadable omission occurs (including tracked binary changes inventoried via `git diff --numstat`). Parents and skills must **fail closed** on incomplete bundles unless the user explicitly acknowledges the omitted paths.
 
 ## Planning convention
 
@@ -202,7 +206,7 @@ Plans and artifacts remain outside target repositories:
 ~/.claude/plans/<primary-repo>/NNN-<slug>/
 ```
 
-Override only when target-project instructions (e.g. `CLAUDE.md`) specify an explicit plan location. Set `PI_PLANS_DIR` to change the base (default `~/.claude/plans`).
+Set `PI_PLANS_DIR` to change the base (default `~/.claude/plans`). Target-project instruction overrides (e.g. `CLAUDE.md`) are auto-honored only when the destination is inside the target repository or the configured `PI_PLANS_DIR`. Any other destination requires explicit user confirmation and must be created through the no-clobber helper (`allocate-plan.mjs --override-path` with `--confirm-override` when needed): non-existing path, regular non-symlink parent.
 
 For this repository, plans live under `~/.claude/plans/pi-extensions/` unless overridden.
 
