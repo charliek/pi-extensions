@@ -10,9 +10,10 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 
-import { isLockStale, sha256Text, withExclusiveLock } from "../scripts/lib/fs-safety.mjs";
+import { isLockStale, sha256Text, snapshotFilesystem, withExclusiveLock } from "../scripts/lib/fs-safety.mjs";
 import {
   agentsDirFor,
+  inspectSyncAgents,
   manifestPathFor,
   migrateManagedManifest,
   syncAgents,
@@ -189,6 +190,57 @@ test("sync --remove never deletes hash-modified files even with --force", () => 
     new Set(["px-code-reviewer.md", "px-simplify-reuse.md"]),
   );
   assert.equal(existsGone(manifestPathFor(agentHome)), true);
+});
+
+test("inspectSyncAgents --check is non-mutating on synced agent home", () => {
+  const packageRoot = makePackage({
+    "px-code-reviewer.md": agentDoc("code review"),
+  });
+  const agentHome = mkdtempSync(join(tmpdir(), "px-home-"));
+  syncAgents({ packageRoot, agentHome });
+
+  const before = snapshotFilesystem(agentHome);
+  const check = inspectSyncAgents({ packageRoot, agentHome });
+  assert.equal(check.ok, true);
+  assert.deepEqual(snapshotFilesystem(agentHome), before);
+});
+
+test("inspectSyncAgents detects legacy manifest migration without writing", () => {
+  const packageRoot = makePackage({
+    "px-code-reviewer.md": agentDoc("code review"),
+  });
+  const agentHome = mkdtempSync(join(tmpdir(), "px-home-"));
+  const manifestPath = manifestPathFor(agentHome);
+  mkdirSync(agentHome, { recursive: true });
+  writeFileSync(
+    manifestPath,
+    JSON.stringify(
+      {
+        schemaVersion: 1,
+        packageName: "pi-extensions",
+        packageVersion: "0.1.0",
+        updatedAt: new Date().toISOString(),
+        files: {
+          "px-code-reviewer.md": {
+            sha256: sha256Text(agentDoc("code review")),
+            source: "agents/px-code-reviewer.md",
+          },
+        },
+      },
+      null,
+      2,
+    ),
+  );
+
+  const before = snapshotFilesystem(agentHome);
+  const check = inspectSyncAgents({ packageRoot, agentHome });
+  assert.equal(check.wouldMigrate, true);
+  assert.equal(check.ok, false);
+  assert.deepEqual(snapshotFilesystem(agentHome), before);
+  assert.throws(
+    () => validateManagedManifest(JSON.parse(readFileSync(manifestPath, "utf8")), manifestPath),
+    /packageRoot/,
+  );
 });
 
 test("sync --check fails for stale missing destinations", () => {

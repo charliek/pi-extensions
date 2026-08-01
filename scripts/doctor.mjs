@@ -4,22 +4,27 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   defaultAgentHome,
+  inspectSyncAgents,
   listManagedSourceAgents,
   manifestPathFor,
   packageInfo,
-  syncAgents,
 } from "./sync-agents.mjs";
 import { expandHome, readJsonIfExists } from "./lib/fs-safety.mjs";
 
 export const REQUIRED_PI_PACKAGES = ["@tintinweb/pi-subagents", "pi-cursor-sdk"];
 
-export const REQUIRED_MODELS = [
+/** Models required by implemented workflows (plan panel, simplify, code/adversarial review). */
+export const REQUIRED_WORKFLOW_MODELS = [
   "cursor/grok-4.5",
   "openai-codex/gpt-5.6-sol",
   "zai-coding-cn/glm-5.2",
-  "cursor/composer-2-5",
-  "cursor/kimi-k3",
 ];
+
+/** Future gauntlet models — warn when missing, do not fail doctor. */
+export const OPTIONAL_FUTURE_MODELS = ["cursor/composer-2-5", "cursor/kimi-k3"];
+
+/** @deprecated Use REQUIRED_WORKFLOW_MODELS + OPTIONAL_FUTURE_MODELS */
+export const REQUIRED_MODELS = [...REQUIRED_WORKFLOW_MODELS, ...OPTIONAL_FUTURE_MODELS];
 
 function run(command, args) {
   return spawnSync(command, args, {
@@ -172,7 +177,8 @@ export function runDoctor({
   packageRoot,
   agentHome = defaultAgentHome(),
   requiredPackages = REQUIRED_PI_PACKAGES,
-  requiredModels = REQUIRED_MODELS,
+  requiredModels = REQUIRED_WORKFLOW_MODELS,
+  optionalModels = OPTIONAL_FUTURE_MODELS,
   skipModelProbe = false,
   listModelsOutput = null,
 } = {}) {
@@ -294,13 +300,17 @@ export function runDoctor({
     }
 
     try {
-      const check = syncAgents({ packageRoot: root, agentHome: home, check: true });
+      const check = inspectSyncAgents({ packageRoot: root, agentHome: home });
       if (!check.ok) {
         ok = false;
+        const detail =
+          check.wouldMigrate
+            ? "Managed manifest needs migration (missing packageRoot). Run: npm run sync-agents"
+            : "Managed agent files are out of sync with the package. Run: npm run sync-agents";
         diagnostics.push({
           level: "error",
-          code: "agent-sync-drift",
-          message: "Managed agent files are out of sync with the package. Run: npm run sync-agents",
+          code: check.wouldMigrate ? "agent-sync-migration-needed" : "agent-sync-drift",
+          message: detail,
         });
       } else {
         diagnostics.push({
@@ -341,6 +351,22 @@ export function runDoctor({
         });
       }
     }
+
+    for (const model of optionalModels) {
+      if (available.has(normalizeModelId(model))) {
+        diagnostics.push({
+          level: "info",
+          code: "optional-model-present",
+          message: `Optional model available: ${model}`,
+        });
+      } else {
+        diagnostics.push({
+          level: "warn",
+          code: "optional-model-missing",
+          message: `Optional future model not detected: ${model} (not required for current workflows)`,
+        });
+      }
+    }
   }
 
   return {
@@ -360,7 +386,8 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const skipModelProbe = process.argv.includes("--skip-models");
   const result = runDoctor({ packageRoot, agentHome, skipModelProbe });
   for (const item of result.diagnostics) {
-    const prefix = item.level === "error" ? "ERROR" : "INFO";
+    const prefix =
+      item.level === "error" ? "ERROR" : item.level === "warn" ? "WARN" : "INFO";
     console.log(`${prefix}: ${item.message}`);
   }
   if (!result.ok) {

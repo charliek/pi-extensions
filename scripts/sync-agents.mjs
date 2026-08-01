@@ -141,6 +141,19 @@ function loadManifest(agentHome, packageRoot) {
   return { path, data: validateManagedManifest(manifest, path), migrated };
 }
 
+/** Read-only manifest load for inspection: migrates in memory only, never writes. */
+function loadManifestForInspection(agentHome, packageRoot) {
+  const path = manifestPathFor(agentHome);
+  const raw = readJsonIfExists(path, null);
+  if (!raw) return { path, data: null, wouldMigrate: false };
+  const { manifest, migrated } = migrateManagedManifest(raw, { packageRoot, path });
+  return {
+    path,
+    data: validateManagedManifest(manifest, path),
+    wouldMigrate: migrated,
+  };
+}
+
 function currentDestinationHash(destPath, home) {
   if (!existsSync(destPath)) return null;
   assertSafePath(destPath, { root: home, label: destPath });
@@ -318,6 +331,74 @@ function revalidateBeforeMutation(action, home) {
   }
 }
 
+/**
+ * Non-mutating inspection path for --check and doctor sync probes.
+ * Never mkdirs, acquires locks, or writes manifests or agent files.
+ */
+export function inspectSyncAgents({
+  packageRoot,
+  agentHome = defaultAgentHome(),
+  force = false,
+  remove = false,
+} = {}) {
+  const root = resolve(packageRoot);
+  const home = resolve(agentHome);
+
+  if (existsSync(home)) assertNotSymlink(home);
+
+  const pkg = packageInfo(root);
+  const sources = listManagedSourceAgents(root);
+  const agentsDir = agentsDirFor(home);
+  const { path: manifestPath, data: existing, wouldMigrate } = loadManifestForInspection(
+    home,
+    root,
+  );
+
+  if (existsSync(agentsDir)) assertSafePath(agentsDir, { root: home, label: agentsDir });
+  if (existsSync(manifestPath)) assertSafePath(manifestPath, { root: home, label: manifestPath });
+
+  if (remove) {
+    return removeManagedAgents({ home, agentsDir, manifestPath, existing, check: true });
+  }
+
+  const { actions, errors } = planSyncActions({
+    sources,
+    agentsDir,
+    existing,
+    force,
+    home,
+  });
+
+  const versionSkew =
+    existing && existing.packageVersion && existing.packageVersion !== pkg.version
+      ? {
+          manifestVersion: existing.packageVersion,
+          packageVersion: pkg.version,
+        }
+      : null;
+
+  if (errors.length > 0) {
+    const error = new Error(errors.join("\n"));
+    error.code = "SYNC_CONFLICT";
+    error.errors = errors;
+    error.versionSkew = versionSkew;
+    throw error;
+  }
+
+  const pending = actions.filter((action) => action.op !== "unchanged");
+  return {
+    ok: pending.length === 0 && !versionSkew && !wouldMigrate,
+    check: true,
+    actions,
+    versionSkew,
+    wouldMigrate,
+    package: pkg,
+    agentHome: home,
+    manifestPath,
+    managedCount: sources.length,
+  };
+}
+
 export function syncAgents({
   packageRoot,
   agentHome = defaultAgentHome(),
@@ -325,6 +406,10 @@ export function syncAgents({
   check = false,
   remove = false,
 } = {}) {
+  if (check) {
+    return inspectSyncAgents({ packageRoot, agentHome, force, remove });
+  }
+
   const root = resolve(packageRoot);
   const home = resolve(agentHome);
   mkdirSync(home, { recursive: true });
@@ -349,7 +434,7 @@ export function syncAgents({
     }
 
     if (remove) {
-      return removeManagedAgents({ home, agentsDir, manifestPath, existing, check });
+      return removeManagedAgents({ home, agentsDir, manifestPath, existing, check: false });
     }
 
     const { plannedFiles, actions, errors } = planSyncActions({
@@ -374,20 +459,6 @@ export function syncAgents({
       error.errors = errors;
       error.versionSkew = versionSkew;
       throw error;
-    }
-
-    if (check) {
-      const pending = actions.filter((action) => action.op !== "unchanged");
-      return {
-        ok: pending.length === 0 && !versionSkew,
-        check: true,
-        actions,
-        versionSkew,
-        package: pkg,
-        agentHome: home,
-        manifestPath,
-        managedCount: sources.length,
-      };
     }
 
     const mutating = actions.filter(

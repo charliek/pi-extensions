@@ -21,7 +21,10 @@
   "scripts": {
     "validate": "node scripts/validate-resources.mjs",
     "sync-agents": "node scripts/sync-agents.mjs",
+    "sync-agents:check": "node scripts/sync-agents.mjs --check",
+    "sync-agents:remove": "node scripts/sync-agents.mjs --remove",
     "doctor": "node scripts/doctor.mjs",
+    "doctor:skip-models": "node scripts/doctor.mjs --skip-models",
     "allocate-plan": "node scripts/allocate-plan.mjs",
     "capture-scope": "node scripts/capture-scope.mjs",
     "build-scope-bundle": "node scripts/build-scope-bundle.mjs",

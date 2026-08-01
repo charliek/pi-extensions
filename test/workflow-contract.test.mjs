@@ -341,3 +341,38 @@ test("C3 sync-agents installs nine managed agents including plan reviewers", () 
     );
   }
 });
+
+test("C4 setup extension and documentation contract", () => {
+  const readme = readFileSync(join(repositoryRoot, "README.md"), "utf8");
+  const contributing = readFileSync(join(repositoryRoot, "CONTRIBUTING.md"), "utf8");
+  const setupSource = readFileSync(join(repositoryRoot, "extensions/setup.js"), "utf8");
+
+  for (const doc of [readme, contributing]) {
+    assert.match(doc, /@tintinweb\/pi-subagents/, "must document pi-subagents prerequisite");
+    assert.match(doc, /pi-cursor-sdk/, "must document pi-cursor-sdk prerequisite");
+    assert.match(doc, /sync-agents|pi-extensions-sync/, "must document agent sync");
+    assert.match(doc, /\/reload/, "must document /reload");
+    assert.match(doc, /first-discovered wins|first wins/i, "must document prompt-template collisions");
+    assert.match(doc, /extension command|numeric suffix/i, "must document extension command collisions");
+    assert.match(doc, /partial/i, "must document partial failures");
+    assert.match(doc, /cursor\/grok-4\.5/, "must document Grok default");
+    assert.match(doc, /prompt-enforced|Cursor-native|not.*sandbox/i, "must document Cursor caveat");
+    assert.match(doc, /~\/\.claude\/plans/, "must document planning path");
+    assert.match(doc, /gauntlet|gated-commit/i, "must mention future gauntlet scope");
+    assert.match(doc, /never writes globally|Importing this package never/i, "must state import never writes");
+  }
+
+  assert.match(readme, /pi install \./, "local install must use pi install .");
+  assert.doesNotMatch(readme, /pi install \.\/pi-extensions/);
+  assert.match(readme, /immutable|tag|SHA|@v/i, "git install must recommend pinned refs");
+  assert.match(readme, /Implemented|implemented/, "README status must not remain scaffold-only");
+  assert.doesNotMatch(readme, /scaffold is in place/i);
+
+  assert.match(setupSource, /registerCommand\(\s*SYNC_COMMAND|registerCommand\(\s*["']pi-extensions-sync["']/);
+  assert.match(setupSource, /registerCommand\(\s*DOCTOR_COMMAND|registerCommand\(\s*["']pi-extensions-doctor["']/);
+  assert.match(setupSource, /ctx\.hasUI/);
+  assert.match(setupSource, /ctx\.ui\.confirm/);
+  assert.match(setupSource, /await runPackageScript|runPackageScript/);
+  assert.doesNotMatch(setupSource, /spawnSync/);
+  assert.doesNotMatch(setupSource, /writeFileSync|mkdirSync|unlinkSync/);
+});

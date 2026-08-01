@@ -11,11 +11,14 @@ import {
   validateSkillDocument,
 } from "../scripts/validate-resources.mjs";
 import {
+  OPTIONAL_FUTURE_MODELS,
+  REQUIRED_WORKFLOW_MODELS,
   collectCursorModelIds,
   parsePiModelTable,
   runDoctor,
 } from "../scripts/doctor.mjs";
 import { syncAgents } from "../scripts/sync-agents.mjs";
+import { snapshotFilesystem } from "../scripts/lib/fs-safety.mjs";
 
 const repositoryRoot = resolve(import.meta.dirname, "..");
 
@@ -293,6 +296,52 @@ zai-coding-cn  glm-5.2                                         200K     16.4K   
   });
   assert.ok(result.diagnostics.some((item) => item.code === "model-present" && /grok-4.5/.test(item.message)));
   assert.ok(result.diagnostics.some((item) => item.code === "model-present" && /kimi-k3/.test(item.message)));
+});
+
+test("doctor treats optional future models as warnings, not failures", () => {
+  const agentHome = mkdtempSync(join(tmpdir(), "px-doctor-optional-"));
+  const result = runDoctor({
+    packageRoot: repositoryRoot,
+    agentHome,
+    requiredPackages: [],
+    requiredModels: REQUIRED_WORKFLOW_MODELS,
+    optionalModels: OPTIONAL_FUTURE_MODELS,
+    skipModelProbe: false,
+    listModelsOutput: "",
+  });
+  assert.equal(result.ok, false);
+  assert.ok(
+    result.diagnostics.some(
+      (item) => item.code === "model-missing" && /grok-4\.5|gpt-5\.6-sol|glm-5\.2/.test(item.message),
+    ),
+  );
+  assert.ok(
+    result.diagnostics.every(
+      (item) =>
+        item.code !== "model-missing" ||
+        !/composer-2-5|kimi-k3/.test(item.message),
+    ),
+  );
+  assert.ok(
+    result.diagnostics.some(
+      (item) => item.code === "optional-model-missing" && /composer-2-5|kimi-k3/.test(item.message),
+    ),
+  );
+});
+
+test("runDoctor agent sync probe is non-mutating", () => {
+  const agentHome = mkdtempSync(join(tmpdir(), "px-doctor-nomut-"));
+  syncAgents({ packageRoot: repositoryRoot, agentHome });
+  const before = snapshotFilesystem(agentHome);
+  runDoctor({
+    packageRoot: repositoryRoot,
+    agentHome,
+    requiredPackages: [],
+    requiredModels: [],
+    optionalModels: [],
+    skipModelProbe: true,
+  });
+  assert.deepEqual(snapshotFilesystem(agentHome), before);
 });
 
 test("doctor reports stale packageRoot in managed manifest", () => {

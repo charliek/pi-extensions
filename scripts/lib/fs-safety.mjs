@@ -6,6 +6,7 @@ import {
   lstatSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   readlinkSync,
   renameSync,
@@ -312,4 +313,27 @@ export function expandHome(path) {
     return join(home, path.slice(2));
   }
   return path;
+}
+
+/** Capture a directory tree snapshot for non-mutation tests (relative paths -> sha256 or kind). */
+export function snapshotFilesystem(root) {
+  const base = resolve(root);
+  if (!existsSync(base)) return { root: base, entries: {} };
+
+  const entries = {};
+  const walk = (dir, prefix = "") => {
+    for (const name of readdirSync(dir).sort()) {
+      const full = join(dir, name);
+      const rel = prefix ? `${prefix}/${name}` : name;
+      const described = describePathKind(full);
+      if (described.kind === "directory") {
+        entries[rel] = { kind: "directory" };
+        walk(full, rel);
+      } else {
+        entries[rel] = described;
+      }
+    }
+  };
+  walk(base);
+  return { root: base, entries };
 }
