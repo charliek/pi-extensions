@@ -24,6 +24,7 @@
     "doctor": "node scripts/doctor.mjs",
     "allocate-plan": "node scripts/allocate-plan.mjs",
     "capture-scope": "node scripts/capture-scope.mjs",
+    "build-scope-bundle": "node scripts/build-scope-bundle.mjs",
     "test": "node --test",
     "check": "npm run validate && npm test"
   },

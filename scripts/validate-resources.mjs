@@ -5,11 +5,18 @@ import { parse as parseYaml } from "yaml";
 
 const REQUIRED_DIRECTORIES = ["agents", "extensions", "prompts", "skills"];
 
-/** Populated by later commits; when non-empty, these relative paths must exist. */
+/** C2 simplify and review primitives; C3 adds planning resources. */
 export const EXPECTED_RESOURCES = {
-  agents: [],
-  prompts: [],
-  skills: [],
+  agents: [
+    "px-simplify-reuse.md",
+    "px-simplify-structure.md",
+    "px-simplify-efficiency.md",
+    "px-simplify-altitude.md",
+    "px-code-reviewer.md",
+    "px-adversarial-reviewer.md",
+  ],
+  prompts: ["simplify.md", "code-review.md", "adversarial-review.md"],
+  skills: ["simplify", "code-review", "adversarial-review"],
 };
 
 const REVIEWER_TOOL_ALLOWLIST = new Set(["read", "grep", "find", "ls"]);

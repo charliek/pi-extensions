@@ -73,6 +73,24 @@ export function validateGitRevision(cwd, ref) {
   return safe;
 }
 
+/** True when ref is a single revision token (not A..B or A...B). */
+export function isSingleRevision(ref) {
+  const safe = assertSafeGitRevision(ref);
+  return !safe.includes("..") && !safe.includes("...");
+}
+
+/**
+ * Map a user ref to the git diff spec.
+ * Single revisions become REV^! (that commit only); ranges stay ranges.
+ */
+export function refDiffSpec(ref) {
+  const safe = assertSafeGitRevision(ref);
+  if (isSingleRevision(safe)) {
+    return { userRef: safe, diffSpec: `${safe}^!`, singleCommit: true };
+  }
+  return { userRef: safe, diffSpec: safe, singleCommit: false };
+}
+
 /**
  * Parse `git status --porcelain=v1 -z` into structured entries.
  * Handles renames, copies, deletions, unmerged XY codes, and paths with spaces via NUL separators.
@@ -244,15 +262,16 @@ export function captureScope({
       stagedOnly: mode === "staged",
       includeUntracked: mode === "uncommitted",
     });
-  } else if (mode === "ref" || mode === "range") {
-    if (!ref) throw new Error("ref/range mode requires ref");
-    baseRef = assertSafeGitRevision(ref);
+  } else if (mode === "ref") {
+    if (!ref) throw new Error("ref mode requires ref");
+    const { userRef, diffSpec } = refDiffSpec(ref);
+    baseRef = userRef;
     // Validate each concrete side when present; full ranges are validated via diff.
-    const sides = baseRef.includes("...")
-      ? baseRef.split("...")
-      : baseRef.includes("..")
-        ? baseRef.split("..")
-        : [baseRef];
+    const sides = userRef.includes("...")
+      ? userRef.split("...")
+      : userRef.includes("..")
+        ? userRef.split("..")
+        : [userRef];
     for (const side of sides) {
       if (!side) continue;
       validateGitRevision(root, side);
@@ -265,11 +284,18 @@ export function captureScope({
       "--find-renames",
       "--find-copies",
       "--end-of-options",
-      baseRef,
+      diffSpec,
     ]);
     entries = parseNameStatusZ(stdout);
     rangePatchHash = sha256Text(
-      git(root, ["diff", "--binary", "--find-renames", "--find-copies", "--end-of-options", baseRef]),
+      git(root, [
+        "diff",
+        "--binary",
+        "--find-renames",
+        "--find-copies",
+        "--end-of-options",
+        diffSpec,
+      ]),
     );
   } else {
     throw new Error(`unsupported scope mode: ${mode}`);
@@ -354,38 +380,18 @@ export function parseNameStatusZ(buffer) {
   return entries;
 }
 
-function parseArgs(argv) {
-  const options = {
-    cwd: process.cwd(),
-    mode: "uncommitted",
-    ref: null,
-    paths: [],
-    json: true,
-  };
-  for (let i = 0; i < argv.length; i += 1) {
-    const arg = argv[i];
-    if (arg === "--staged") options.mode = "staged";
-    else if (arg === "--ref") {
-      options.mode = "ref";
-      const value = argv[++i];
-      if (value == null) throw new Error("--ref requires a revision or range");
-      options.ref = assertSafeGitRevision(value);
-    } else if (arg === "--cwd") options.cwd = argv[++i];
-    else if (arg === "--path") options.paths.push(argv[++i]);
-    else if (arg === "--help" || arg === "-h") options.help = true;
-    else throw new Error(`unknown argument: ${arg}`);
-  }
-  return options;
-}
+import { parseScopeArgs } from "./lib/scope-args.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   try {
-    const options = parseArgs(process.argv.slice(2));
+    const options = parseScopeArgs(process.argv.slice(2));
     if (options.help) {
-      console.log(`Usage: node scripts/capture-scope.mjs [--staged] [--ref REF] [--path FILE]
+      console.log(`Usage: node scripts/capture-scope.mjs [--staged] [--ref REV] [--path FILE]... [--focus TEXT]
 
 Capture a deterministic change-scope manifest for simplify/review workflows.
+Use explicit --path and --focus; positional arguments are rejected.
+Single --ref revisions diff that commit only (REV^!); ranges stay ranges.
 `);
       process.exit(0);
     }

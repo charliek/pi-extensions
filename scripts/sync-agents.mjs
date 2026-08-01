@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   assertNotSymlink,
@@ -65,6 +65,33 @@ export function listManagedSourceAgents(packageRoot) {
     });
 }
 
+/**
+ * Upgrade in-place schema-v1 manifests that predate packageRoot recording.
+ * Returns { manifest, migrated } when fields were added; otherwise { manifest: data, migrated: false }.
+ */
+export function migrateManagedManifest(data, { packageRoot, path = "<manifest>" } = {}) {
+  if (data == null || typeof data !== "object" || Array.isArray(data)) {
+    throw new Error(`${path}: invalid managed-agent manifest`);
+  }
+  if (data.schemaVersion !== MANIFEST_SCHEMA_VERSION) {
+    throw new Error(
+      `${path}: unsupported manifest schemaVersion ${data.schemaVersion}; expected ${MANIFEST_SCHEMA_VERSION}`,
+    );
+  }
+  const migrated = { ...data, files: { ...(data.files ?? {}) } };
+  let changed = false;
+
+  if (typeof migrated.packageRoot !== "string" || !migrated.packageRoot.trim()) {
+    if (!packageRoot) {
+      throw new Error(`${path}: packageRoot must be a non-empty absolute path string`);
+    }
+    migrated.packageRoot = resolve(packageRoot);
+    changed = true;
+  }
+
+  return { manifest: migrated, migrated: changed };
+}
+
 export function validateManagedManifest(data, path = "<manifest>") {
   if (data == null || typeof data !== "object" || Array.isArray(data)) {
     throw new Error(`${path}: invalid managed-agent manifest`);
@@ -79,6 +106,12 @@ export function validateManagedManifest(data, path = "<manifest>") {
   }
   if (typeof data.packageVersion !== "string" || !data.packageVersion.trim()) {
     throw new Error(`${path}: packageVersion must be a non-empty string`);
+  }
+  if (typeof data.packageRoot !== "string" || !data.packageRoot.trim()) {
+    throw new Error(`${path}: packageRoot must be a non-empty absolute path string`);
+  }
+  if (!isAbsolute(data.packageRoot)) {
+    throw new Error(`${path}: packageRoot must be absolute: ${data.packageRoot}`);
   }
   if (data.files == null || typeof data.files !== "object" || Array.isArray(data.files)) {
     throw new Error(`${path}: files must be an object`);
@@ -100,11 +133,12 @@ export function validateManagedManifest(data, path = "<manifest>") {
   return data;
 }
 
-function loadManifest(agentHome) {
+function loadManifest(agentHome, packageRoot) {
   const path = manifestPathFor(agentHome);
-  const data = readJsonIfExists(path, null);
-  if (!data) return { path, data: null };
-  return { path, data: validateManagedManifest(data, path) };
+  const raw = readJsonIfExists(path, null);
+  if (!raw) return { path, data: null, migrated: false };
+  const { manifest, migrated } = migrateManagedManifest(raw, { packageRoot, path });
+  return { path, data: validateManagedManifest(manifest, path), migrated };
 }
 
 function currentDestinationHash(destPath, home) {
@@ -122,6 +156,7 @@ function manifestsEquivalent(existing, next) {
   if (existing.schemaVersion !== next.schemaVersion) return false;
   if (existing.packageName !== next.packageName) return false;
   if (existing.packageVersion !== next.packageVersion) return false;
+  if (existing.packageRoot !== next.packageRoot) return false;
   const left = existing.files ?? {};
   const right = next.files ?? {};
   const leftKeys = Object.keys(left).sort();
@@ -301,10 +336,17 @@ export function syncAgents({
     const pkg = packageInfo(root);
     const sources = listManagedSourceAgents(root);
     const agentsDir = agentsDirFor(home);
-    const { path: manifestPath, data: existing } = loadManifest(home);
+    const { path: manifestPath, data: existing, migrated: manifestMigrated } = loadManifest(
+      home,
+      root,
+    );
 
     if (existsSync(agentsDir)) assertSafePath(agentsDir, { root: home, label: agentsDir });
     if (existsSync(manifestPath)) assertSafePath(manifestPath, { root: home, label: manifestPath });
+
+    if (manifestMigrated && existing) {
+      writeJsonAtomic(manifestPath, existing, { root: home });
+    }
 
     if (remove) {
       return removeManagedAgents({ home, agentsDir, manifestPath, existing, check });
@@ -355,6 +397,7 @@ export function syncAgents({
       schemaVersion: MANIFEST_SCHEMA_VERSION,
       packageName: pkg.name,
       packageVersion: pkg.version,
+      packageRoot: root,
       updatedAt: new Date().toISOString(),
       files: plannedFiles,
     };

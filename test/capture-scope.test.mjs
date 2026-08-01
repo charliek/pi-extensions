@@ -116,24 +116,33 @@ test("captureScope fingerprints uncommitted content, types, and symlink targets"
   assert.ok(!staged.files.some((file) => file.path === "file with spaces.txt"));
 });
 
-test("captureScope ref mode rejects option injection and includes renames from a range", () => {
+test("captureScope ref mode rejects option injection; single ref uses REV^!", () => {
   const root = initRepo();
   writeFileSync(join(root, "old.txt"), "a\n");
   git(root, ["add", "old.txt"]);
   git(root, ["commit", "-m", "old"]);
-  const base = git(root, ["rev-parse", "HEAD"]).trim();
+  const first = git(root, ["rev-parse", "HEAD"]).trim();
 
   git(root, ["mv", "old.txt", "new name.txt"]);
   writeFileSync(join(root, "extra.txt"), "b\n");
-  git(root, ["add", "extra.txt"]);
+  git(root, ["add", "."]);
   git(root, ["commit", "-m", "move and add"]);
+  const head = git(root, ["rev-parse", "HEAD"]).trim();
 
   assert.throws(
     () => captureScope({ cwd: root, mode: "ref", ref: "--output=/tmp/pwned" }),
     /git option/,
   );
 
-  const scope = captureScope({ cwd: root, mode: "ref", ref: base });
-  assert.ok(scope.files.some((file) => file.status === "renamed" && file.path === "new name.txt"));
-  assert.ok(scope.files.some((file) => file.path === "extra.txt" && file.status === "added"));
+  const single = captureScope({ cwd: root, mode: "ref", ref: first });
+  assert.ok(single.files.some((file) => file.path === "old.txt" && file.status === "added"));
+  assert.ok(!single.files.some((file) => file.path === "new name.txt"));
+
+  const headScope = captureScope({ cwd: root, mode: "ref", ref: head });
+  assert.ok(headScope.files.some((file) => file.status === "renamed" && file.path === "new name.txt"));
+  assert.ok(headScope.files.some((file) => file.path === "extra.txt" && file.status === "added"));
+
+  const rangeScope = captureScope({ cwd: root, mode: "ref", ref: `${first}..HEAD` });
+  assert.ok(rangeScope.files.some((file) => file.path === "new name.txt"));
+  assert.ok(rangeScope.files.length >= headScope.files.length);
 });

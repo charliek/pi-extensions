@@ -261,6 +261,38 @@ export function runDoctor({
       });
     }
 
+    if (typeof manifest.packageRoot !== "string" || !manifest.packageRoot.trim()) {
+      ok = false;
+      diagnostics.push({
+        level: "error",
+        code: "package-root-missing",
+        message: "Managed manifest is missing packageRoot. Re-run: npm run sync-agents",
+      });
+    } else {
+      const recordedRoot = resolve(manifest.packageRoot);
+      if (recordedRoot !== root) {
+        ok = false;
+        diagnostics.push({
+          level: "error",
+          code: "package-root-stale",
+          message: `Manifest packageRoot ${recordedRoot} does not match current checkout ${root}. Re-run: npm run sync-agents`,
+        });
+      } else if (!existsSync(join(recordedRoot, "package.json"))) {
+        ok = false;
+        diagnostics.push({
+          level: "error",
+          code: "package-root-invalid",
+          message: `Manifest packageRoot ${recordedRoot} is missing package.json. Re-run sync from a valid checkout or set PI_EXTENSIONS_ROOT`,
+        });
+      } else {
+        diagnostics.push({
+          level: "info",
+          code: "package-root-ok",
+          message: `Manifest packageRoot matches checkout (${recordedRoot})`,
+        });
+      }
+    }
+
     try {
       const check = syncAgents({ packageRoot: root, agentHome: home, check: true });
       if (!check.ok) {

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -15,6 +15,7 @@ import {
   parsePiModelTable,
   runDoctor,
 } from "../scripts/doctor.mjs";
+import { syncAgents } from "../scripts/sync-agents.mjs";
 
 const repositoryRoot = resolve(import.meta.dirname, "..");
 
@@ -292,4 +293,24 @@ zai-coding-cn  glm-5.2                                         200K     16.4K   
   });
   assert.ok(result.diagnostics.some((item) => item.code === "model-present" && /grok-4.5/.test(item.message)));
   assert.ok(result.diagnostics.some((item) => item.code === "model-present" && /kimi-k3/.test(item.message)));
+});
+
+test("doctor reports stale packageRoot in managed manifest", () => {
+  const agentHome = mkdtempSync(join(tmpdir(), "px-doctor-root-"));
+  syncAgents({ packageRoot: repositoryRoot, agentHome });
+
+  const manifestPath = join(agentHome, "pi-extensions-managed-agents.json");
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  manifest.packageRoot = join(tmpdir(), "stale-nonexistent-root");
+  writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+
+  const result = runDoctor({
+    packageRoot: repositoryRoot,
+    agentHome,
+    requiredPackages: [],
+    requiredModels: [],
+    skipModelProbe: true,
+  });
+  assert.equal(result.ok, false);
+  assert.ok(result.diagnostics.some((item) => item.code === "package-root-stale"));
 });

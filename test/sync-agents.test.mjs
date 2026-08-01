@@ -7,13 +7,14 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import test from "node:test";
 
 import { isLockStale, sha256Text, withExclusiveLock } from "../scripts/lib/fs-safety.mjs";
 import {
   agentsDirFor,
   manifestPathFor,
+  migrateManagedManifest,
   syncAgents,
   validateManagedManifest,
 } from "../scripts/sync-agents.mjs";
@@ -52,6 +53,55 @@ function existsGone(path) {
   }
 }
 
+test("sync migrates legacy schema-v1 manifest missing packageRoot", () => {
+  const packageRoot = makePackage({
+    "px-code-reviewer.md": agentDoc("code review"),
+  });
+  const agentHome = mkdtempSync(join(tmpdir(), "px-home-"));
+  const manifestPath = manifestPathFor(agentHome);
+  mkdirSync(agentHome, { recursive: true });
+  writeFileSync(
+    manifestPath,
+    JSON.stringify(
+      {
+        schemaVersion: 1,
+        packageName: "pi-extensions",
+        packageVersion: "0.1.0",
+        updatedAt: new Date().toISOString(),
+        files: {
+          "px-code-reviewer.md": {
+            sha256: sha256Text(agentDoc("code review")),
+            source: "agents/px-code-reviewer.md",
+          },
+        },
+      },
+      null,
+      2,
+    ),
+  );
+
+  const result = syncAgents({ packageRoot, agentHome });
+  assert.equal(result.ok, true);
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  assert.equal(manifest.packageRoot, resolve(packageRoot));
+  assert.doesNotThrow(() => validateManagedManifest(manifest, manifestPath));
+});
+
+test("migrateManagedManifest adds packageRoot for legacy schema-v1 manifests", () => {
+  const packageRoot = makePackage({});
+  const { manifest, migrated } = migrateManagedManifest(
+    {
+      schemaVersion: 1,
+      packageName: "pi-extensions",
+      packageVersion: "0.1.0",
+      files: {},
+    },
+    { packageRoot },
+  );
+  assert.equal(migrated, true);
+  assert.equal(manifest.packageRoot, resolve(packageRoot));
+});
+
 test("sync installs managed agents idempotently with manifest outside agents/", () => {
   const packageRoot = makePackage({
     "px-code-reviewer.md": agentDoc("code review"),
@@ -70,6 +120,7 @@ test("sync installs managed agents idempotently with manifest outside agents/", 
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
   assert.equal(manifest.schemaVersion, 1);
   assert.equal(manifest.packageVersion, "0.1.0");
+  assert.equal(manifest.packageRoot, resolve(packageRoot));
   assert.equal(manifest.files["px-code-reviewer.md"].sha256, sha256Text(agentDoc("code review")));
 
   const before = readFileSync(manifestPath, "utf8");
@@ -161,6 +212,7 @@ test("sync --check fails for stale missing destinations", () => {
         schemaVersion: 1,
         packageName: "pi-extensions",
         packageVersion: "0.1.0",
+        packageRoot: packageRoot,
         updatedAt: new Date().toISOString(),
         files: {
           "px-code-reviewer.md": {
@@ -194,6 +246,7 @@ test("validateManagedManifest rejects bad package/schema/filenames/hashes", () =
         schemaVersion: 1,
         packageName: "x",
         packageVersion: "1",
+        packageRoot: "/tmp/pi-extensions",
         files: { "evil.md": { sha256: "a".repeat(64), source: "agents/evil.md" } },
       }),
     /unexpected filename/,
@@ -204,6 +257,7 @@ test("validateManagedManifest rejects bad package/schema/filenames/hashes", () =
         schemaVersion: 1,
         packageName: "x",
         packageVersion: "1",
+        packageRoot: "/tmp/pi-extensions",
         files: { "px-a.md": { sha256: "nope", source: "agents/px-a.md" } },
       }),
     /invalid sha256/,
