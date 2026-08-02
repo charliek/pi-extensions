@@ -27,84 +27,39 @@ Pi natively discovers `extensions/`, `prompts/`, and `skills/` from `package.jso
 
 Workflow behavior lives here rather than in each target repository's `CLAUDE.md` or `AGENTS.md`. Agents use `prompt_mode: append` so they still inherit target-project instructions.
 
-## Prerequisites
+## Fresh-computer setup
 
-- **Node.js** 22.19 or newer
-- **Pi** 0.80.9+ (0.83+ recommended for provider extensions)
-- **Git** (for plan allocation and scope capture in target repos)
+See **[SETUP.md](SETUP.md)** for the complete person- and agent-friendly bootstrap guide, including pinned installs, provider authentication, synchronization, verification, updates, removal, and troubleshooting.
 
-Install these **separate Pi packages** before using panel review, simplify, or Cursor-backed reviewers:
+High-level sequence:
 
-```bash
-pi install npm:@tintinweb/pi-subagents
-pi install npm:pi-cursor-sdk
-```
+1. Install Git, Node.js 22.19+ (Node 24 recommended), and Pi 0.80.9+ (Pi 0.83+ recommended).
+2. Install the separate prerequisites: `@tintinweb/pi-subagents` and `pi-cursor-sdk`.
+3. Install this package from a local checkout with `pi install .`, or from an **immutable** trusted Git tag/SHA.
+4. Authenticate OpenAI Codex, ZAI Coding Plan China, and Cursor through `/login`.
+5. Explicitly synchronize the nine managed agents with `npm run sync-agents` or `/pi-extensions-sync`.
+6. Run `/reload`, followed by `npm run doctor` or `/pi-extensions-doctor`.
 
-This package does not bundle them; npm dependencies here do not auto-load their Pi resources.
-
-### Cursor authentication
-
-Cursor-backed models (`cursor/grok-4.5`, `cursor/composer-2-5`, `cursor/kimi-k3`) require a working **pi-cursor-sdk** install and Cursor authentication. After installing `pi-cursor-sdk`, authenticate per that package's docs, then verify:
-
-```bash
-pi --list-models cursor
-```
-
-Doctor checks **required workflow models** (Grok, Sol, GLM) when run interactively; optional future models (`cursor/composer-2-5`, `cursor/kimi-k3`) produce warnings only. Use `npm run doctor:skip-models` or `/pi-extensions-doctor --skip-models` when offline.
-
-## Installation
-
-### From a local checkout (development)
+Minimal local-checkout path:
 
 ```bash
 git clone https://github.com/charliek/pi-extensions.git
 cd pi-extensions
-npm install
-
-# Install prerequisite Pi packages (required, separate step)
-pi install npm:@tintinweb/pi-subagents
-pi install npm:pi-cursor-sdk
-
-# Register this package with Pi (global or project-local)
-pi install .                    # writes ~/.pi/agent/settings.json
-# pi install -l .               # project-local .pi/settings.json
-
-# Synchronize px-* agents (explicit global write)
+npm ci
+pi install npm:@tintinweb/pi-subagents@0.14.3
+pi install npm:pi-cursor-sdk@0.1.62
+pi install .
 npm run sync-agents
-
-# Verify prerequisites and sync state
-npm run doctor
+npm run doctor:skip-models  # authenticate providers next, then run the full doctor
 ```
 
-### From Git (without cloning manually)
-
-Pin an **immutable ref** (release tag or commit SHA) you trust — avoid floating `@main` in production setups:
+For a checkout-free install, pin a trusted full commit SHA or release tag rather than floating `@main`:
 
 ```bash
-pi install npm:@tintinweb/pi-subagents
-pi install npm:pi-cursor-sdk
-pi install git:github.com/charliek/pi-extensions@v0.1.0   # tag
-# pi install git:github.com/charliek/pi-extensions@abc1234   # commit SHA
-
-# After install, sync agents from the installed package root:
-/pi-extensions-sync
-/pi-extensions-doctor
+pi install git:github.com/charliek/pi-extensions@<FULL_COMMIT_SHA>
 ```
 
-### Updating or uninstalling
-
-1. **Update package:** `pi install git:github.com/charliek/pi-extensions@<new-ref>` (or `pi install .` from a fresh checkout)
-2. **Reload Pi:** `/reload` (or restart) so prompts, skills, and extensions reload
-3. **Re-sync agents:** `/pi-extensions-sync` or `npm run sync-agents` from a checkout
-4. **Verify:** `/pi-extensions-doctor` or `npm run doctor`
-
-To remove:
-
-1. **Remove managed agents first:** `/pi-extensions-sync --remove` or `npm run sync-agents:remove`
-2. **Remove the Pi package:** `pi remove git:github.com/charliek/pi-extensions` (use the same source identity recorded by `pi list`)
-3. **Reload Pi:** `/reload`
-
-After changing the installed package or syncing agents, run **`/reload`** in Pi (or start a fresh `pi` process) so prompts, skills, extensions, and synchronized agents are picked up.
+Then start Pi, authenticate with `/login`, run `/pi-extensions-sync`, `/reload`, and `/pi-extensions-doctor`. Cursor requires a Cursor SDK API key; `pi-cursor-sdk` does not reuse Cursor Desktop or CLI login state. Full details and manual checkpoints are in [SETUP.md](SETUP.md).
 
 ## Agent sync, check, update, and remove
 

@@ -353,6 +353,7 @@ test("C3 sync-agents installs nine managed agents including plan reviewers", () 
 
 test("C4 setup extension and documentation contract", () => {
   const readme = readFileSync(join(repositoryRoot, "README.md"), "utf8");
+  const setupGuide = readFileSync(join(repositoryRoot, "SETUP.md"), "utf8");
   const contributing = readFileSync(join(repositoryRoot, "CONTRIBUTING.md"), "utf8");
   const setupSource = readFileSync(join(repositoryRoot, "extensions/setup.js"), "utf8");
 
@@ -371,10 +372,21 @@ test("C4 setup extension and documentation contract", () => {
     assert.match(doc, /never writes globally|Importing this package never/i, "must state import never writes");
   }
 
+  assert.match(readme, /\[SETUP\.md\]\(SETUP\.md\)/, "README must link the bootstrap guide");
   assert.match(readme, /pi install \./, "local install must use pi install .");
   assert.doesNotMatch(readme, /pi install \.\/pi-extensions/);
   assert.match(readme, /immutable|tag|SHA|@v/i, "git install must recommend pinned refs");
   assert.match(readme, /Implemented|implemented/, "README status must not remain scaffold-only");
+  assert.match(setupGuide, /@tintinweb\/pi-subagents@0\.14\.3/);
+  assert.match(setupGuide, /pi-cursor-sdk@0\.1\.62/);
+  assert.match(setupGuide, /FULL_COMMIT_SHA|release tag/);
+  assert.match(setupGuide, /OpenAI Codex/);
+  assert.match(setupGuide, /ZAI Coding Plan China/);
+  assert.match(setupGuide, /Cursor SDK API key/);
+  assert.match(setupGuide, /pi-extensions-sync/);
+  assert.match(setupGuide, /\/reload/);
+  assert.match(setupGuide, /pi-extensions-doctor/);
+  assert.match(setupGuide, /~\/\.claude\/plans/);
   assert.doesNotMatch(readme, /scaffold is in place/i);
 
   assert.match(setupSource, /registerCommand\(\s*SYNC_COMMAND|registerCommand\(\s*["']pi-extensions-sync["']/);
