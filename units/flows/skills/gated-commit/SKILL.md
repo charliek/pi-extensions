@@ -88,9 +88,13 @@ primary failed. Fallthrough on hard error, empty output, or malformed output.
 
 | Order | Reviewer | How |
 | --- | --- | --- |
-| 1 | `openai-codex/gpt-5.6-sol` at `high` | `px-reviewer` via `code-review` skill when present; else launch `px-reviewer` directly |
+| 1 | `openai-codex/gpt-5.6-sol` at `high` | follow the `code-review` skill when present; else launch the `px-reviewer` charter directly when it is installed; else parent self-review |
 | 2 | CodeRabbit CLI | only if the `coderabbit` unit is present; else skip to 3 |
-| 3 | `cursor/grok-4.5` at `high` | `px-reviewer` |
+| 3 | `cursor/grok-4.5` at `high` | same resolution as order 1, with the model overridden |
+
+The `code-review` skill and the `px-reviewer` charter both belong to the
+`review` unit. If that unit is absent, orders 1 and 3 degrade to a careful
+parent self-review against the same lens, and the commit message says so.
 
 Primary launch (label `(sol) Review <chunk>`):
 

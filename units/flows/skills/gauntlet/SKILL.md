@@ -130,11 +130,12 @@ the panel was skipped.
 
 Inside gauntlet, simplify runs at **workstream boundaries**, not every chunk.
 After a group of related chunks lands, evaluate the accumulated diff since the
-last simplify pass. Run simplify (via the `simplify` skill when present) when
-any trigger fires — new module/component, pattern at 3+ call sites, or ~150+
-net new lines — and state which. Pass pinned plan decisions into the simplify
-prompt. Label: `(grok-4.5) Simplify workstream <name>`. If the `simplify`
-skill is absent, skip and say so.
+last simplify pass against the trigger conditions in `gated-commit` (the
+canonical list — do not restate them here) and state which one fired. Run
+simplify via the `simplify` skill when present, passing pinned plan decisions
+into the prompt. Label: `(grok-4.5) Simplify workstream <name>`. If the
+`simplify` skill is absent, skip and say so. If `gated-commit` is also absent,
+skip simplify entirely rather than inventing thresholds.
 
 ## Phase 5 — Verification record
 
