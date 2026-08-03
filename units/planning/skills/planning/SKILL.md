@@ -55,7 +55,7 @@ Fill every section. Use `file:line` evidence in verified current state:
 3. **Verified current state** — citations from the target repository
 4. **Pinned decisions** and **rejected alternatives**
 5. **Non-goals**
-6. **Work breakdown** — ordered chunks `C1..Cn`, each independently shippable, each naming its gate; **no upper bound** on chunk count
+6. **Work breakdown** — the **commit list**, `C1..Cn`. Each `C` is one commit, not a task step. Size by coherence: a commit is independently shippable, so if landing or reverting it alone would leave the repo broken or make no sense to a reviewer, merge it with its neighbor. Put internal steps as sub-bullets under their commit. Name each commit's gate. **No upper bound** — a large refactor legitimately runs past ten commits; a focused change is often one.
 7. **File map**
 8. **Acceptance criteria** — measurable exit criteria
 9. **Verification** — commands and checks that prove acceptance
@@ -83,7 +83,7 @@ Every panel reviewer evaluates the full plan against:
 4. Does the plan match the repository's architectural patterns and conventions?
 5. Are risks, gaps, or missing edge cases understated?
 6. Is the file list / work breakdown complete? Are non-goals explicit?
-7. Can each chunk be executed as written (prerequisites, sequencing, named gate)?
+7. Can each commit be executed as written (prerequisites, sequencing, named gate), and is it genuinely shippable on its own rather than a task step masquerading as a commit?
 
 Then spend remaining attention on the assigned secondary emphasis
 (`feasibility`, `risk`, or `alternatives`) without dropping the core questions.

@@ -22,7 +22,7 @@ Each unit owns its skill(s) and any agents. Removing `units/<name>/` removes tha
 | --- | --- |
 | Write or panel-review a plan | `planning` |
 | Large refactor / full plan → PR lifecycle | `gauntlet` |
-| Disciplined one- or two-commit change | `gated-commit` |
+| Single coherent change that deserves the discipline | `gated-commit` |
 | Typos, docs, mechanical renames | neither flow — commit normally |
 | Review a diff (correctness or adversarial) | `code-review` |
 | Behavior-preserving cleanup | `simplify` |

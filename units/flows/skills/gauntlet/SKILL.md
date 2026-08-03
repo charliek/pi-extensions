@@ -3,13 +3,13 @@ name: gauntlet
 description: >-
   Full build flow — discovery, panel-reviewed plan, gated commits, verification,
   PR watched to green. Use for "run the gauntlet", "write and execute a plan",
-  or large refactors (often 10+ chunks). Leaves the PR open; never release/deploy.
+  or large refactors spanning many commits. Leaves the PR open; never release/deploy.
 ---
 
 # Gauntlet
 
 Run a substantial piece of work end-to-end: discovery, a written plan
-pressure-tested by an AI panel, implementation as small gated commits,
+pressure-tested by an AI panel, implementation as gated commits,
 verification beyond the automated tests where needed, and one PR shepherded to
 green. Stop before any release/deploy.
 
@@ -31,7 +31,7 @@ decision is settled.
    restate the plan schema or panel routing here. If that unit is absent, write
    a self-contained plan and do a careful self-review against the planning
    schema, saying the panel was skipped.
-5. **Per-chunk quality loop defers to `gated-commit`.** If that skill is
+5. **Per-commit quality loop defers to `gated-commit`.** If that skill is
    absent, run the gate yourself, skip simplify, review with Sol (or self-review),
    and commit once — saying what was skipped.
 6. **Default: leave the PR open** for the user's merge decision. Never
@@ -43,8 +43,8 @@ decision is settled.
 
 | Situation | Use |
 | --- | --- |
-| Work that warrants a written plan — large refactors, often 10+ chunks, design not obvious | Full `gauntlet` |
-| Disciplined one- or two-commit change | `gated-commit` alone |
+| Work that warrants a written plan — large refactors, several commits, design not obvious | Full `gauntlet` |
+| Single coherent change that needs no plan | `gated-commit` alone |
 | Typos, docs-only, mechanical renames | Neither — commit normally |
 
 ## Model table
@@ -54,8 +54,8 @@ decision is settled.
 | Discovery (`Explore`) | `cursor/composer-2.5` | n/a (never assign a thinking level) |
 | Discovery, hard surface (parent judgment) | `cursor/grok-4.5` or `cursor/kimi-k3` | high |
 | Plan authoring + panel | delegated to `planning` | — |
-| Implementation, most critical chunk (~1) | `cursor/kimi-k3` | high |
-| Implementation, normal chunk | `cursor/grok-4.5` | high |
+| Implementation, most critical commit (~1) | `cursor/kimi-k3` | high |
+| Implementation, normal commit | `cursor/grok-4.5` | high |
 | Implementation, mechanical | `cursor/composer-2.5` | n/a |
 | Per-commit review / simplify | owned by `gated-commit` / workstream simplify below | — |
 | Ship / watch | `watch-pr` when present | — |
@@ -90,9 +90,10 @@ PR body must carry its substance (Phase 6).
 ## Phase 2 — Plan
 
 When the `planning` skill is available, follow it to allocate and author the
-plan (gauntlet schema, including work breakdown `C1..Cn` with each chunk
-independently shippable and **naming its gate** — no upper bound on chunk
-count). Pass the scope brief as the authoring input.
+plan (gauntlet schema, whose work breakdown `C1..Cn` is the **commit list** —
+each `C` one independently shippable commit naming its gate, with internal
+steps as sub-bullets rather than separate `C` items). Pass the scope brief as
+the authoring input.
 
 If the `planning` skill is absent, allocate with
 `node "<package-root>/scripts/allocate-plan.mjs" --slug <slug>` when that
@@ -112,8 +113,13 @@ the panel was skipped.
 
 ## Phase 4 — Implementation (gated commits)
 
-- One feature branch (`feature/plan-NNN-<slug>`), one PR, many small commits.
-- For each planned chunk:
+- One feature branch (`feature/plan-NNN-<slug>`), one PR, one commit per `C` in
+  the plan's commit list. Do not sub-divide a `C` into several commits, and do
+  not commit a partial `C` — the plan already decided commit granularity, so a
+  three-commit plan produces three commits and a one-commit plan produces one.
+  If implementation reveals a `C` was mis-sized, change the plan (Phase 3) rather
+  than improvising a different granularity here.
+- For each planned commit:
   1. Implement with a `general-purpose` subagent given the plan section as its
      authoritative spec. The subagent does **not** commit. Model by criticality
      from the table above. Label e.g. `(grok-4.5) Implement C3: settings panel`.
@@ -128,8 +134,8 @@ the panel was skipped.
 
 ### Workstream-boundary simplify
 
-Inside gauntlet, simplify runs at **workstream boundaries**, not every chunk.
-After a group of related chunks lands, evaluate the accumulated diff since the
+Inside gauntlet, simplify runs at **workstream boundaries**, not every commit.
+After a group of related commits lands, evaluate the accumulated diff since the
 last simplify pass against the trigger conditions in `gated-commit` (the
 canonical list — do not restate them here) and state which one fired. Run
 simplify via the `simplify` skill when present, passing pinned plan decisions

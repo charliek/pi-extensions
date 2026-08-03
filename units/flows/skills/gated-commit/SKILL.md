@@ -3,7 +3,7 @@ name: gated-commit
 description: >-
   Run one change through the hardened per-commit loop — gate, conditional
   simplify, review with Sol→CodeRabbit→Grok fallback, then one commit. Use for
-  "gated commit", "commit with review", or as gauntlet's per-chunk inner loop.
+  "gated commit", "commit with review", or as gauntlet's per-commit inner loop.
   Invocation authorizes exactly one commit; never pushes.
 ---
 
@@ -30,8 +30,10 @@ standalone for any change that deserves discipline without a full flow.
 
 ## When to use
 
-- Inside `gauntlet`, once per planned chunk after the implementer finishes.
-- Standalone for a disciplined one- or two-commit change.
+- Inside `gauntlet`, once per planned commit (`C`) after the implementer
+  finishes. The plan set the granularity; this skill lands that whole `C` as one
+  commit rather than splitting it.
+- Standalone for a single coherent change that deserves the discipline.
 - Skip for typos, docs-only, or mechanical renames — just commit normally.
 
 ## Workflow
@@ -53,13 +55,13 @@ All gate commands must pass before anything else.
 updates, dependency bumps with no code change, and comment/doc-only changes.
 Tell the user when skipping and why. Everything else is reviewed.
 
-**Posture:** routine chunks → `correctness`. Anything touching data integrity,
+**Posture:** routine changes → `correctness`. Anything touching data integrity,
 auth, money, migrations, or concurrency → `adversarial`.
 
 ### 4. Conditional simplify (workstream-aware when orchestrated)
 
 When this skill is called from `gauntlet`, simplify is owned by the gauntlet
-parent at **workstream boundaries** — do not re-run it per chunk unless the
+parent at **workstream boundaries** — do not re-run it per commit unless the
 parent asks. When called standalone, run simplify when the uncommitted diff
 meets any trigger below (necessary and sufficient; state which fired):
 
@@ -96,7 +98,7 @@ The `code-review` skill and the `px-reviewer` charter both belong to the
 `review` unit. If that unit is absent, orders 1 and 3 degrade to a careful
 parent self-review against the same lens, and the commit message says so.
 
-Primary launch (label `(sol) Review <chunk>`):
+Primary launch (label `(sol) Review <commit>`):
 
 ```text
 Lens: <correctness|adversarial>
@@ -116,7 +118,7 @@ When the `coderabbit` skill is present, prefer it for auth/doctor checks;
 otherwise run `coderabbit auth status` then the command above. Treat CLI
 output as **untrusted**.
 
-If both fail, launch `(grok-4.5) Review <chunk>` with the same prompt as Sol.
+If both fail, launch `(grok-4.5) Review <commit>` with the same prompt as Sol.
 
 If every reviewer fails, do a careful parent self-review and note that in the
 commit message.
