@@ -401,6 +401,11 @@ export function allocatePlan({
   const repoDir = join(rootPlansDir, repoName);
   const lockPath = join(repoDir, ".allocate.lock");
 
+  // The lock file is created before any plan file, so repoDir has to be checked
+  // here — atomicCreateFile's own check comes too late to stop a lock written
+  // through a symlink pointing outside the plans root.
+  assertSafePath(repoDir, { root: rootPlansDir, label: repoDir });
+
   return withExclusiveLock(lockPath, () => {
     ensureDir(repoDir);
     const number = nextPlanNumber(repoDir);

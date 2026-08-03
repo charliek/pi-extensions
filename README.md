@@ -49,7 +49,7 @@ Defaults stay on free or flat-rate providers on this machine. Every launch site 
 | Simplify | `cursor/grok-4.5` (high), four lenses |
 | Gauntlet discovery | `cursor/composer-2.5` (no thinking level); escalate hard surfaces to grok/kimi |
 | Gauntlet implementation | `cursor/kimi-k3` (critical), `cursor/grok-4.5` (normal), `cursor/composer-2.5` (mechanical) |
-| watch-pr triage / fixes | `composer-2.5` / `grok-4.5` |
+| watch-pr triage / fixes | `cursor/composer-2.5` / `cursor/grok-4.5` |
 
 Every subagent label is prefixed with its model, e.g. `(sol) Review C3`.
 
@@ -66,7 +66,7 @@ bash bin/link-agents.sh
 
 Then `/reload` in Pi (or restart). Authenticate providers you need (`openai-codex`, `cursor`, `zai-coding-cn`) via Pi `/login`. For `watch-pr` / `merge-pr`, install and authenticate the GitHub CLI (`gh`).
 
-**Update:** `git pull` in the checkout, then re-run `bash bin/link-agents.sh` if agent files were added or renamed.
+**Update:** `git pull` in the checkout, then re-run `bash bin/link-agents.sh` whenever agent files or units are added, renamed, or removed — the same pass that creates new links prunes stale ones.
 
 ## Agent linking
 

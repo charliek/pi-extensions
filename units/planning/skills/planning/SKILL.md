@@ -105,7 +105,7 @@ Same as panel, but one `px-plan-reviewer` with the requested secondary emphasis 
 
 ## CodeRabbit rubric lens (plans; native)
 
-CodeRabbit CLI cannot review non-git documents. Apply this rubric yourself (or via one `px-plan-reviewer` call with secondary emphasis `alternatives` plus the core rubric) — do **not** call `coderabbit review` on the plan file. Label if using a subagent: `(grok-4.5) CodeRabbit rubric lens` (or the model you chose).
+CodeRabbit CLI cannot review non-git documents. Apply this rubric yourself (or via one `px-plan-reviewer` call with secondary emphasis `alternatives` plus the core rubric) — do **not** call `coderabbit review` on the plan file. Label if using a subagent: `(glm-5.2) CodeRabbit rubric lens`, matching the `alternatives` default.
 
 Checklist: the core review rubric above. Read relevant repo files to ground the review. Disposition findings the same way as panel review. Parent alone edits the plan.
 

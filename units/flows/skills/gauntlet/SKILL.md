@@ -32,8 +32,10 @@ decision is settled.
    a self-contained plan and do a careful self-review against the planning
    schema, saying the panel was skipped.
 5. **Per-commit quality loop defers to `gated-commit`.** If that skill is
-   absent, run the gate yourself, skip simplify, review with Sol (or self-review),
-   and commit once — saying what was skipped.
+   absent, run the gate yourself, skip simplify, review with
+   `openai-codex/gpt-5.6-sol` at `high` labeled `(sol) Review <commit>` (or
+   self-review if that provider is unavailable), and commit once — saying what
+   was skipped.
 6. **Default: leave the PR open** for the user's merge decision. Never
    release/deploy unless the brief explicitly says otherwise.
 7. **Single-repo scope.** Multi-repo orchestration is out of scope for this

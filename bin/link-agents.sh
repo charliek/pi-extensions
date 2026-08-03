@@ -17,14 +17,16 @@ skipped=0
 replaced=0
 pruned=0
 
-declare -A desired_names=()
+# Newline-delimited rather than an associative array: `declare -A` needs Bash 4,
+# and macOS still ships 3.2 as /bin/bash.
+desired_names=$'\n'
 
 shopt -s nullglob
 for agent_path in "${REPO_ROOT}"/units/*/agents/*.md; do
   name="$(basename "${agent_path}")"
   dest="${AGENTS_DIR}/${name}"
   target="$(realpath "${agent_path}")"
-  desired_names["${name}"]=1
+  desired_names="${desired_names}${name}"$'\n'
 
   if [[ -L "${dest}" ]]; then
     current="$(readlink "${dest}")"
@@ -62,9 +64,9 @@ shopt -s nullglob
 for entry in "${AGENTS_DIR}"/*; do
   [[ -L "${entry}" ]] || continue
   name="$(basename "${entry}")"
-  if [[ -n "${desired_names[${name}]+x}" ]]; then
-    continue
-  fi
+  case "${desired_names}" in
+    *$'\n'"${name}"$'\n'*) continue ;;
+  esac
 
   # Use stored link text so dangling targets still classify; realpath -m
   # normalizes relative paths without requiring the target to exist.
