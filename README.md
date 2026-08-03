@@ -14,7 +14,16 @@ units/
   git/          skills: watch-pr, merge-pr
 ```
 
-Each unit owns its skill(s) and any agents. Removing `units/<name>/` removes that workflow; the others keep working (cross-unit references degrade with a stated fallback).
+Each unit owns its skill(s) and any agents. Removing `units/<name>/` removes that workflow. The remaining skills still load and run — no dangling references — but a step that reached into the removed unit degrades to a named fallback and says so:
+
+| Removed | Effect elsewhere |
+| --- | --- |
+| `review` | `gated-commit` review chain drops to parent self-review; `simplify` notes bugs instead of routing them |
+| `coderabbit` | `gated-commit` skips its second reviewer; `code-review` and `planning` lose the optional CLI pass |
+| `simplify` | `gauntlet` and `gated-commit` skip the simplify pass |
+| `planning` | `gauntlet` writes a plan itself and skips the panel |
+| `git` | `gauntlet` watches with `gh pr checks` instead of `watch-pr` |
+| `flows` | no behavior change elsewhere; other units mention it only as "when present" |
 
 ## When to reach for what
 
