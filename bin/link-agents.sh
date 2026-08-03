@@ -4,11 +4,28 @@
 # Prunes stale symlinks that once pointed under this repo's units/.
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd -P)"
 UNITS_DIR="${REPO_ROOT}/units"
 AGENT_HOME="${PI_CODING_AGENT_DIR:-${HOME}/.pi/agent}"
 AGENTS_DIR="${AGENT_HOME}/agents"
+
+# Collapse "." and ".." lexically. BSD realpath has no -m, so a dangling link
+# target cannot be normalized by realpath on macOS.
+normalize_path() {
+  local path="$1" part out=""
+  local -a parts=()
+  local IFS='/'
+  read -r -a parts <<< "${path}"
+  for part in "${parts[@]}"; do
+    case "${part}" in
+      ""|".") ;;
+      "..") out="${out%/*}" ;;
+      *) out="${out}/${part}" ;;
+    esac
+  done
+  printf '%s' "${out:-/}"
+}
 
 mkdir -p "${AGENTS_DIR}"
 
@@ -68,13 +85,13 @@ for entry in "${AGENTS_DIR}"/*; do
     *$'\n'"${name}"$'\n'*) continue ;;
   esac
 
-  # Use stored link text so dangling targets still classify; realpath -m
-  # normalizes relative paths without requiring the target to exist.
+  # Use stored link text so dangling targets still classify, and normalize
+  # lexically so the comparison does not depend on the target existing.
   link_text="$(readlink "${entry}")"
   if [[ "${link_text}" = /* ]]; then
-    candidate="$(realpath -m "${link_text}")"
+    candidate="$(normalize_path "${link_text}")"
   else
-    candidate="$(realpath -m "${AGENTS_DIR}/${link_text}")"
+    candidate="$(normalize_path "${AGENTS_DIR}/${link_text}")"
   fi
 
   case "${candidate}" in

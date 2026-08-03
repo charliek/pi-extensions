@@ -250,8 +250,10 @@ export function withExclusiveLock(
       throw new Error(`could not acquire lock ${lockPath}: ${reason}`);
     }
 
+    let created = false;
     try {
       fd = openSync(lockPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
+      created = true;
       inode = fstatSync(fd).ino;
       writeFileSync(fd, payload);
       closeSync(fd);
@@ -265,6 +267,17 @@ export function withExclusiveLock(
           // ignore
         }
         fd = null;
+      }
+      if (created) {
+        // We created the file but never finished writing our token, so
+        // releaseOwnedLock would not recognize it. Drop it now rather than
+        // leaving a lock nobody can claim or clear.
+        inode = undefined;
+        try {
+          unlinkSync(lockPath);
+        } catch {
+          // ignore
+        }
       }
       if (error?.code === "EEXIST") {
         if (isLegacyLockPath(lockPath)) {

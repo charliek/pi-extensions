@@ -28,7 +28,7 @@ Choose one (ask if ambiguous):
 
 | Scope | Commands |
 | --- | --- |
-| Working tree (default) | `git diff` / `git diff HEAD` plus untracked files |
+| Working tree (default) | `git diff HEAD` — not bare `git diff`, which omits staged changes — plus untracked files |
 | Staged | `git diff --cached` |
 | Against a base branch | `git diff <base>...HEAD` |
 | Single ref / range | `git diff <ref>` or `<ref>^!` for one commit |

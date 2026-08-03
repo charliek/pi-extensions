@@ -16,7 +16,7 @@ description: >-
 
    | Scope | Commands |
    | --- | --- |
-   | Working tree (default) | `git status --short` and `git diff` / `git diff HEAD` (include untracked by reading new files) |
+   | Working tree (default) | `git status --short` and `git diff HEAD` — not bare `git diff`, which omits staged changes (include untracked by reading new files) |
    | Staged | `git diff --cached` |
    | Against a base branch | `git diff <base>...HEAD` plus `git log --oneline <base>..HEAD` |
    | Single ref / range | `git diff <ref>` or `git show <ref>`; for one commit prefer `<ref>^!` |
