@@ -1,6 +1,6 @@
 # pi-extensions
 
-Personal [Pi](https://pi.dev) skills and agents for four workflows: **planning**, **code review**, **simplify**, and **CodeRabbit**. One local package; units are directories you can delete wholesale.
+Personal [Pi](https://pi.dev) skills and agents for six workflows: **planning**, **code review**, **simplify**, **CodeRabbit**, **flows** (gauntlet / gated-commit), and **git** (watch-pr / merge-pr). One local package; units are directories you can delete wholesale.
 
 ## Units
 
@@ -10,9 +10,48 @@ units/
   review/       skill: code-review       agent: px-reviewer
   simplify/     skill: simplify          agent: px-simplifier
   coderabbit/   skill: coderabbit        (CLI knowledge; no agent)
+  flows/        skills: gauntlet, gated-commit
+  git/          skills: watch-pr, merge-pr
 ```
 
-Each unit owns its skill and any agents. Removing `units/<name>/` removes that workflow; the other three keep working.
+Each unit owns its skill(s) and any agents. Removing `units/<name>/` removes that workflow; the others keep working (cross-unit references degrade with a stated fallback).
+
+## When to reach for what
+
+| Situation | Skill |
+| --- | --- |
+| Write or panel-review a plan | `planning` |
+| Large refactor / full plan → PR lifecycle | `gauntlet` |
+| Disciplined one- or two-commit change | `gated-commit` |
+| Typos, docs, mechanical renames | neither flow — commit normally |
+| Review a diff (correctness or adversarial) | `code-review` |
+| Behavior-preserving cleanup | `simplify` |
+| Local CodeRabbit CLI on a git diff | `coderabbit` |
+| Babysit a PR to green (CI + bot reviews) | `watch-pr` |
+| Merge a green PR | `merge-pr` |
+
+## Commit authority
+
+- `gated-commit` — invoking it authorizes **exactly one** commit; it never pushes.
+- Nested `simplify` / `code-review` stay report-only; only the gated-commit parent commits.
+- `watch-pr` commits and pushes fix commits autonomously, with a circuit breaker if the same check fails twice.
+- `merge-pr` never merges unless invoked directly; gauntlet leaves PRs open by default.
+- `planning`, `simplify`, `code-review`, and all reviewer charters never commit.
+
+## Models and cost
+
+Defaults stay on free or flat-rate providers on this machine. Every launch site names its model explicitly (session defaults may be API-rate).
+
+| Role | Default |
+| --- | --- |
+| Plan panel | `openai-codex/gpt-5.6-sol`, `cursor/grok-4.5`, `zai-coding-cn/glm-5.2` (all high) |
+| Code review | `openai-codex/gpt-5.6-sol` (high); gated-commit falls back to CodeRabbit CLI, then `cursor/grok-4.5` |
+| Simplify | `cursor/grok-4.5` (high), four lenses |
+| Gauntlet discovery | `cursor/composer-2.5` (no thinking level); escalate hard surfaces to grok/kimi |
+| Gauntlet implementation | `cursor/kimi-k3` (critical), `cursor/grok-4.5` (normal), `cursor/composer-2.5` (mechanical) |
+| watch-pr triage / fixes | `composer-2.5` / `grok-4.5` |
+
+Every subagent label is prefixed with its model, e.g. `(sol) Review C3`.
 
 ## Install
 
@@ -25,7 +64,7 @@ pi install .
 bash bin/link-agents.sh
 ```
 
-Then `/reload` in Pi (or restart). Authenticate providers you need (`openai-codex`, `cursor`, `zai-coding-cn`) via Pi `/login`.
+Then `/reload` in Pi (or restart). Authenticate providers you need (`openai-codex`, `cursor`, `zai-coding-cn`) via Pi `/login`. For `watch-pr` / `merge-pr`, install and authenticate the GitHub CLI (`gh`).
 
 **Update:** `git pull` in the checkout, then re-run `bash bin/link-agents.sh` if agent files were added or renamed.
 
@@ -40,24 +79,32 @@ bash bin/link-agents.sh
 
 The script links every `units/*/agents/*.md` into `$PI_CODING_AGENT_DIR/agents` (default `~/.pi/agent/agents`). It replaces existing symlinks, refuses to overwrite regular files, prunes its own stale links (symlinks whose target is under this repo's `units/` but no longer desired), and is safe to re-run.
 
-Agents: `px-plan-reviewer`, `px-reviewer`, `px-simplifier`. Model, thinking, and lens are passed per invocation — one charter serves multi-model panels.
+Agents: `px-plan-reviewer`, `px-reviewer`, `px-simplifier`. Model, thinking, and lens/emphasis are passed per invocation.
 
 ## Invoke skills
 
 Natural language (Pi matches on skill descriptions):
 
 - "write this up as a plan" / "panel review the plan"
+- "run the gauntlet" / "write and execute a plan"
+- "gated commit" / "commit with review"
 - "code review my diff" / "adversarial review"
 - "simplify this" / "deslop"
 - "run coderabbit"
+- "watch this PR" / "get CI green"
+- "merge this PR"
 
 Or force a full skill read:
 
 ```text
 /skill:planning
+/skill:gauntlet
+/skill:gated-commit
 /skill:code-review
 /skill:simplify
 /skill:coderabbit
+/skill:watch-pr
+/skill:merge-pr
 ```
 
 Skills accept optional model/thinking overrides in the request text. Plans allocate via:
@@ -77,9 +124,9 @@ Relative to earlier revisions of this repo:
 - Diff fingerprint / scope-bundle helpers and the setup extension
 - Agent file copying and the managed-agents manifest (replaced by `bin/link-agents.sh`)
 - Doctor command and plan-location override flags on the allocator
-- Multi-stage flow orchestration language in skill/prompt text
 - The test suite that only covered the deleted infrastructure
-- Nine per-lens agent charters (collapsed to three lens-parameterized charters)
+- Nine per-lens agent charters (collapsed to three parameterized charters)
+- Multi-repo gauntlet orchestration (single-repo only for now)
 
 ## Layout
 
