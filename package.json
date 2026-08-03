@@ -1,8 +1,8 @@
 {
   "name": "pi-extensions",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "Portable Pi agents, skills, prompts, and workflow extensions",
+  "description": "Personal Pi skills and agents: planning, review, simplify, and CodeRabbit",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -10,7 +10,6 @@
   },
   "keywords": [
     "pi-package",
-    "pi-extension",
     "coding-agent",
     "subagents"
   ],
@@ -19,30 +18,12 @@
     "url": "git+https://github.com/charliek/pi-extensions.git"
   },
   "scripts": {
-    "validate": "node scripts/validate-resources.mjs",
-    "sync-agents": "node scripts/sync-agents.mjs",
-    "sync-agents:check": "node scripts/sync-agents.mjs --check",
-    "sync-agents:remove": "node scripts/sync-agents.mjs --remove",
-    "doctor": "node scripts/doctor.mjs",
-    "doctor:skip-models": "node scripts/doctor.mjs --skip-models",
     "allocate-plan": "node scripts/allocate-plan.mjs",
-    "capture-scope": "node scripts/capture-scope.mjs",
-    "build-scope-bundle": "node scripts/build-scope-bundle.mjs",
-    "test": "node --test",
-    "check": "npm run validate && npm test"
-  },
-  "dependencies": {
-    "yaml": "^2.8.0"
+    "link-agents": "bash bin/link-agents.sh"
   },
   "pi": {
-    "extensions": [
-      "./extensions"
-    ],
     "skills": [
-      "./skills"
-    ],
-    "prompts": [
-      "./prompts"
+      "./units/*/skills"
     ]
   }
 }

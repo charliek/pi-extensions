@@ -1,18 +1,35 @@
-import { existsSync, readdirSync } from "node:fs";
-import { basename, dirname, join, resolve, sep } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+#!/usr/bin/env node
+/**
+ * Allocate ~/.claude/plans/<repo>/NNN-<slug>.md and a sibling artifact directory.
+ * Honors PI_PLANS_DIR. Uses an exclusive lock while choosing the next number.
+ *
+ * Prints two lines: planPath, then artifactsDir.
+ */
 import {
-  assertSafeCreateDestination,
-  atomicCreateFile,
-  canonicalPath,
-  ensureDir,
-  expandHome,
-  isPathInside,
-  withExclusiveLock,
-} from "./lib/fs-safety.mjs";
-import { detectGitRoot } from "./lib/git.mjs";
+  chmodSync,
+  closeSync,
+  constants,
+  existsSync,
+  fstatSync,
+  linkSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { randomBytes } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const PLAN_NAME = /^(\d{3})-(.+)\.md$/;
+const DEFAULT_LOCK_RETRIES = 100;
+const DEFAULT_LOCK_DELAY_MS = 25;
 const WINDOWS_RESERVED = new Set([
   "con",
   "prn",
@@ -38,6 +55,268 @@ const WINDOWS_RESERVED = new Set([
   "lpt9",
 ]);
 
+function sleepSync(ms) {
+  const sab = new SharedArrayBuffer(4);
+  const ia = new Int32Array(sab);
+  Atomics.wait(ia, 0, 0, ms);
+}
+
+export function expandHome(path) {
+  if (path === "~") return process.env.HOME ?? process.env.USERPROFILE ?? path;
+  if (path.startsWith("~/") || path.startsWith("~\\")) {
+    const home = process.env.HOME ?? process.env.USERPROFILE;
+    if (!home) return path;
+    return join(home, path.slice(2));
+  }
+  return path;
+}
+
+export function ensureDir(path) {
+  mkdirSync(path, { recursive: true });
+}
+
+export function assertNotSymlink(path, label = path) {
+  if (!existsSync(path)) return;
+  const stat = lstatSync(path);
+  if (stat.isSymbolicLink()) {
+    throw new Error(`${label}: refusing to use symlink`);
+  }
+}
+
+export function canonicalPath(path) {
+  const resolved = resolve(path);
+  if (existsSync(resolved)) {
+    try {
+      return realpathSync(resolved);
+    } catch {
+      return resolved;
+    }
+  }
+  const missing = [];
+  let current = resolved;
+  while (!existsSync(current)) {
+    const parent = dirname(current);
+    if (parent === current) break;
+    missing.unshift(basename(current));
+    current = parent;
+  }
+  try {
+    current = realpathSync(current);
+  } catch {
+    // keep logical prefix
+  }
+  return missing.length > 0 ? join(current, ...missing) : current;
+}
+
+export function assertSafePath(path, { root = null, label = path } = {}) {
+  const resolved = canonicalPath(path);
+  const resolvedRoot = root == null ? null : canonicalPath(root);
+  if (resolvedRoot != null) {
+    const rel = relative(resolvedRoot, resolved);
+    if (rel.startsWith("..") || (rel !== "" && resolve(resolvedRoot, rel) !== resolved)) {
+      throw new Error(`${label}: path escapes safety root`);
+    }
+  }
+
+  let current = resolve(path);
+  const stopAt = root == null ? null : resolve(root);
+  while (true) {
+    if (existsSync(current)) {
+      const stat = lstatSync(current);
+      if (stat.isSymbolicLink()) {
+        throw new Error(`${label}: refusing to use symlink at ${current}`);
+      }
+    }
+    if (stopAt == null || current === stopAt || canonicalPath(current) === resolvedRoot) break;
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+}
+
+function writeTempFile(dir, contents, mode) {
+  const temp = join(dir, `.${randomBytes(8).toString("hex")}.tmp`);
+  const fd = openSync(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, mode);
+  try {
+    writeFileSync(fd, contents);
+  } finally {
+    closeSync(fd);
+  }
+  chmodSync(temp, mode);
+  return temp;
+}
+
+export function atomicCreateFile(path, contents, { mode = 0o644, root = null } = {}) {
+  const dir = dirname(path);
+  ensureDir(dir);
+  if (root != null) assertSafePath(dir, { root, label: dir });
+  else assertNotSymlink(dir);
+  if (existsSync(path)) {
+    throw new Error(`refusing to clobber existing path: ${path}`);
+  }
+
+  const temp = writeTempFile(dir, contents, mode);
+  try {
+    linkSync(temp, path);
+  } catch (error) {
+    try {
+      unlinkSync(temp);
+    } catch {
+      // ignore cleanup failures
+    }
+    if (error?.code === "EEXIST") {
+      throw new Error(`refusing to clobber existing path: ${path}`);
+    }
+    throw error;
+  }
+
+  try {
+    unlinkSync(temp);
+  } catch {
+    // orphaned temp is harmless
+  }
+}
+
+function formatLockContents(token) {
+  return `${process.pid}\n${new Date().toISOString()}\n${token}\n`;
+}
+
+function parseOwnedLockContents(text, token) {
+  const lines = String(text).split(/\r?\n/);
+  const pid = Number.parseInt(lines[0] ?? "", 10);
+  const lockToken = lines[2] ?? "";
+  return {
+    pid: Number.isInteger(pid) ? pid : null,
+    token: lockToken,
+    owned: lockToken === token,
+  };
+}
+
+export function isLegacyLockPath(lockPath) {
+  if (!existsSync(lockPath)) return false;
+  try {
+    const stat = lstatSync(lockPath);
+    if (stat.isDirectory()) return true;
+    if (!stat.isFile()) return true;
+    const lines = readFileSync(lockPath, "utf8").split(/\r?\n/);
+    return lines.length < 3 || !lines[2];
+  } catch {
+    return true;
+  }
+}
+
+function describeLegacyLock(lockPath) {
+  if (!existsSync(lockPath)) return null;
+  try {
+    const stat = lstatSync(lockPath);
+    if (stat.isDirectory()) {
+      return "legacy directory lock (remove manually before retrying)";
+    }
+    return "legacy lock file (remove manually before retrying)";
+  } catch {
+    return "unreadable lock path (remove manually before retrying)";
+  }
+}
+
+function releaseOwnedLock(lockPath, { inode, token }) {
+  if (!existsSync(lockPath)) return;
+  try {
+    const stat = statSync(lockPath);
+    if (stat.ino !== inode) return;
+    const contents = readFileSync(lockPath, "utf8");
+    const parsed = parseOwnedLockContents(contents, token);
+    if (!parsed.owned) return;
+    unlinkSync(lockPath);
+  } catch {
+    // leave the lock for manual cleanup
+  }
+}
+
+export function withExclusiveLock(
+  lockPath,
+  fn,
+  { retries = DEFAULT_LOCK_RETRIES, delayMs = DEFAULT_LOCK_DELAY_MS } = {},
+) {
+  ensureDir(dirname(lockPath));
+
+  const token = randomBytes(16).toString("hex");
+  const payload = formatLockContents(token);
+  let fd;
+  let inode;
+
+  for (let attempt = 0; attempt < retries; attempt += 1) {
+    if (isLegacyLockPath(lockPath)) {
+      const reason = describeLegacyLock(lockPath) ?? "legacy lock present";
+      throw new Error(`could not acquire lock ${lockPath}: ${reason}`);
+    }
+
+    try {
+      fd = openSync(lockPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
+      inode = fstatSync(fd).ino;
+      writeFileSync(fd, payload);
+      closeSync(fd);
+      fd = null;
+      break;
+    } catch (error) {
+      if (fd != null) {
+        try {
+          closeSync(fd);
+        } catch {
+          // ignore
+        }
+        fd = null;
+      }
+      if (error?.code === "EEXIST") {
+        if (isLegacyLockPath(lockPath)) {
+          const reason = describeLegacyLock(lockPath) ?? "legacy lock present";
+          throw new Error(`could not acquire lock ${lockPath}: ${reason}`);
+        }
+        if (attempt + 1 >= retries) {
+          throw new Error(
+            `could not acquire lock ${lockPath}: lock held (remove manually if orphaned)`,
+          );
+        }
+        sleepSync(delayMs);
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  if (inode == null) {
+    throw new Error(`could not acquire lock ${lockPath}: busy`);
+  }
+
+  try {
+    return fn();
+  } finally {
+    releaseOwnedLock(lockPath, { inode, token });
+  }
+}
+
+function git(cwd, args) {
+  const result = spawnSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    maxBuffer: 32 * 1024 * 1024,
+  });
+  if (result.status !== 0) {
+    const message = (result.stderr || result.stdout || "git command failed").trim();
+    const error = new Error(message);
+    error.code = "GIT_ERROR";
+    throw error;
+  }
+  return result.stdout;
+}
+
+export function detectGitRoot(cwd = process.cwd()) {
+  try {
+    return git(cwd, ["rev-parse", "--show-toplevel"]).trim();
+  } catch {
+    return null;
+  }
+}
+
 export function defaultPlansDir() {
   const override = process.env.PI_PLANS_DIR;
   if (override) return resolve(expandHome(override));
@@ -55,10 +334,6 @@ export function sanitizeSlug(input) {
   return cleaned.slice(0, 80);
 }
 
-/**
- * Cross-platform repository directory name sanitization.
- * Rejects path separators, reserved Windows device names, and unsafe characters.
- */
 export function sanitizeRepositoryName(input) {
   const name = String(input ?? "").trim();
   if (!name) throw new Error(`invalid repository name: ${input}`);
@@ -79,8 +354,6 @@ export function sanitizeRepositoryName(input) {
   }
   return name;
 }
-
-export { detectGitRoot } from "./lib/git.mjs";
 
 export function detectRepositoryName(cwd = process.cwd(), explicitName) {
   if (explicitName) return sanitizeRepositoryName(explicitName);
@@ -112,110 +385,6 @@ export function nextPlanNumber(repoDir) {
 
 export function formatPlanNumber(n) {
   return String(n).padStart(3, "0");
-}
-
-/**
- * Classify a plan-location override from target instructions.
- * Auto-allowed only when contained in the target repo or configured PI_PLANS_DIR.
- * Any other destination requires explicit user confirmation (`confirmed: true`).
- */
-export function classifyPlanLocationOverride({
-  overridePath,
-  cwd = process.cwd(),
-  plansDir = defaultPlansDir(),
-  confirmed = false,
-} = {}) {
-  if (typeof overridePath !== "string" || !overridePath.trim()) {
-    throw new Error("plan location override path is required");
-  }
-  const resolved = canonicalPath(expandHome(overridePath.trim()));
-  const repoRoot = detectGitRoot(cwd);
-  const rootPlansDir = canonicalPath(expandHome(plansDir));
-  const allowedRoots = [rootPlansDir];
-  if (repoRoot) allowedRoots.push(canonicalPath(repoRoot));
-
-  const autoAllowed = allowedRoots.some((root) => isPathInside(root, resolved));
-  if (!autoAllowed && !confirmed) {
-    const error = new Error(
-      `plan location override requires explicit user confirmation (outside target repo and PI_PLANS_DIR): ${resolved}`,
-    );
-    error.code = "PLAN_LOCATION_CONFIRM_REQUIRED";
-    error.resolvedPath = resolved;
-    error.allowedRoots = allowedRoots;
-    throw error;
-  }
-
-  const safetyRoot = autoAllowed
-    ? allowedRoots.find((root) => isPathInside(root, resolved))
-    : null;
-  assertSafeCreateDestination(resolved, {
-    root: safetyRoot,
-    label: "plan location override",
-  });
-
-  return {
-    planPath: resolved,
-    artifactsDir: join(dirname(resolved), basename(resolved, ".md")),
-    autoAllowed,
-    confirmed: Boolean(confirmed),
-    plansDir: rootPlansDir,
-    repoRoot,
-  };
-}
-
-/**
- * Create a plan file at an explicit override path (no-clobber, symlink-safe parent).
- */
-export function allocatePlanAtOverride({
-  overridePath,
-  cwd = process.cwd(),
-  plansDir = defaultPlansDir(),
-  confirmed = false,
-  slug,
-  brief,
-  body,
-} = {}) {
-  const classified = classifyPlanLocationOverride({
-    overridePath,
-    cwd,
-    plansDir,
-    confirmed,
-  });
-  const planSlug = sanitizeSlug(slug ?? brief ?? basename(classified.planPath, ".md"));
-  const lockTarget = join(dirname(classified.planPath), ".allocate-override.lock");
-
-  return withExclusiveLock(lockTarget, () => {
-    // Re-validate under the lock so a concurrent creator cannot be clobbered.
-    assertSafeCreateDestination(classified.planPath, {
-      label: "plan location override",
-    });
-    if (existsSync(classified.artifactsDir)) {
-      throw new Error(`plan artifacts path already exists: ${classified.artifactsDir}`);
-    }
-
-    const contents =
-      body ??
-      `# ${basename(classified.planPath, ".md")}
-
-## Status
-
-Draft — allocated by allocate-plan override.
-
-## Motivation
-
-${brief ? String(brief).trim() : "(fill in)"}
-`;
-    const normalized = contents.endsWith("\n") ? contents : `${contents}\n`;
-    atomicCreateFile(classified.planPath, normalized);
-    ensureDir(classified.artifactsDir);
-
-    return {
-      ...classified,
-      slug: planSlug,
-      id: basename(classified.planPath, ".md"),
-      overridden: true,
-    };
-  });
 }
 
 export function allocatePlan({
@@ -269,7 +438,6 @@ ${brief ? String(brief).trim() : "(fill in)"}
       artifactsDir,
       plansDir: rootPlansDir,
       repoDir,
-      overridden: false,
     };
   });
 }
@@ -281,8 +449,6 @@ function parseArgs(argv) {
     slug: null,
     brief: null,
     repository: null,
-    overridePath: null,
-    confirmed: false,
   };
   const positionals = [];
   for (let i = 0; i < argv.length; i += 1) {
@@ -291,8 +457,6 @@ function parseArgs(argv) {
     else if (arg === "--repository") options.repository = argv[++i];
     else if (arg === "--plans-dir") options.plansDir = argv[++i];
     else if (arg === "--cwd") options.cwd = argv[++i];
-    else if (arg === "--override-path") options.overridePath = argv[++i];
-    else if (arg === "--confirm-override") options.confirmed = true;
     else if (arg === "--help" || arg === "-h") options.help = true;
     else if (arg.startsWith("-")) throw new Error(`unknown argument: ${arg}`);
     else positionals.push(arg);
@@ -302,27 +466,17 @@ function parseArgs(argv) {
   return options;
 }
 
-const scriptPath = fileURLToPath(import.meta.url);
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   try {
     const options = parseArgs(process.argv.slice(2));
     if (options.help) {
       console.log(`Usage: node scripts/allocate-plan.mjs [--slug SLUG] [--repository NAME] [brief...]
-       node scripts/allocate-plan.mjs --override-path PATH [--confirm-override] [--slug SLUG]
 
 Allocates ~/.claude/plans/<repo>/NNN-<slug>.md and a sibling artifact directory.
-Honors PI_PLANS_DIR. Uses an exclusive lock while choosing the next number.
+Honors PI_PLANS_DIR (or --plans-dir). Uses an exclusive lock while choosing the next number.
 
-Override paths inside the target repo or PI_PLANS_DIR are auto-allowed.
-Any other override path requires --confirm-override and must be a non-existing
-destination with a non-symlink regular parent (no-clobber).
+Prints two lines: planPath, then artifactsDir.
 `);
-      process.exit(0);
-    }
-    if (options.overridePath) {
-      const result = allocatePlanAtOverride(options);
-      console.log(result.planPath);
-      console.log(result.artifactsDir);
       process.exit(0);
     }
     if (!options.slug && !options.brief) throw new Error("slug or brief is required");
